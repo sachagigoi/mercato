@@ -38,8 +38,18 @@ body {
 }
 .card-in { animation: card-in 400ms cubic-bezier(0.22, 1, 0.36, 1); }
 
+/* Signale une carte mise à jour en place : sans ça, un changement de
+   probabilité au milieu d'une grille de 60 cartes passe inaperçu. */
+@keyframes card-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0); }
+  25%  { box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.45); }
+  100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0); }
+}
+.card-pulse { animation: card-pulse 1400ms ease-out; }
+
 @media (prefers-reduced-motion: reduce) {
-  .card-in { animation: none; }
+  .card-in,
+  .card-pulse { animation: none; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;

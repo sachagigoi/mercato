@@ -27,7 +27,7 @@ function TransferArrow({ hex }: { hex: string }) {
   );
 }
 
-export function MercatoCard({ transfer: t }: { transfer: Transfer }) {
+export function MercatoCard({ transfer: t, className = "" }: { transfer: Transfer; className?: string }) {
   const accent = accentOf(t.type, t.probability_score);
   const a = ACCENT[accent];
 
@@ -136,16 +136,21 @@ export function MercatoCard({ transfer: t }: { transfer: Transfer }) {
     </>
   );
 
+  // La carte est un enfant direct de la grille : elle doit rester la seule
+  // boîte, sinon `align-items: stretch` ne l'atteint plus et les hauteurs de
+  // ligne se désalignent. Les classes d'animation arrivent donc par `className`.
   const shell =
-    "group flex flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60 backdrop-blur-sm transition duration-200 hover:-translate-y-0.5 hover:border-slate-700 focus-visible:-translate-y-0.5 focus-visible:border-slate-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500";
+    `group flex flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60 backdrop-blur-sm transition duration-200 hover:-translate-y-0.5 hover:border-slate-700 focus-visible:-translate-y-0.5 focus-visible:border-slate-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500 ${className}`;
 
   // La carte entière est cliquable quand la source est traçable : sur un produit
   // d'actu, une info qu'on ne peut pas remonter à sa source n'est pas crédible.
   return t.source_url ? (
-    <a href={t.source_url} target="_blank" rel="noopener noreferrer" className={shell}>
+    <a data-mercato-card href={t.source_url} target="_blank" rel="noopener noreferrer" className={shell}>
       {body}
     </a>
   ) : (
-    <article className={shell}>{body}</article>
+    <article data-mercato-card className={shell}>
+      {body}
+    </article>
   );
 }

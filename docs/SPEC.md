@@ -3,8 +3,8 @@
 > Feed temps réel de transferts et rumeurs football. Next.js 16 (App Router) · Supabase · Tailwind v4.
 > Document de référence unique pour le MVP.
 
-**État : Phases 0 et 1 livrées.** Base Supabase en ligne et vérifiée, application Next.js
-échafaudée, `MercatoCard` et la grille responsive en place, banc de rendu à `/preview` — cf. §11.
+**État : Phases 0, 1 et 2 livrées.** Base Supabase en ligne et vérifiée, carte et grille en place,
+filtres et Realtime branchés, bancs de rendu et d'interaction à `/preview` — cf. §11.
 
 ---
 
@@ -242,6 +242,7 @@ app/
   globals.css                   # @theme Tailwind v4 + tokens
   api/cron/ingest/route.ts      # runner d'ingestion (protégé par CRON_SECRET)
   preview/page.tsx              # banc de rendu des composants (§4.8)
+  preview/feed/page.tsx         # banc d'interaction du feed (§4.8)
 components/
   MercatoFeed.tsx               # 'use client' — état, realtime, filtres
   FilterBar.tsx                 # 'use client' — 4 onglets
@@ -259,6 +260,9 @@ lib/
   sources/apifootball.ts        # résolution visuels + cache + budget
   format.ts                     # parsing montants, emoji drapeau, temps relatif
   accent.ts                     # accentOf() + map de classes littérales
+  feed.ts                       # mergeRows(), maxCreatedAt() — logique pure
+  feed.test.ts                  # 13 tests node:test sur la fusion et les filtres
+  filters.ts                    # définition des 4 filtres, seuil « chaud »
   fixtures.ts                   # jeu de cas limites du banc de rendu
   types.ts                      # types générés depuis Supabase
 public/demo/                    # gabarits de portrait (Phase 1)
@@ -294,6 +298,14 @@ réseau au clic. Sous 1 000 lignes c'est instantané et ça supprime tout état 
    `id` — jamais un `[...prev, nouveau]` nu.
 3. **La croissance mémoire.** Onglet ouvert 8 h = tableau qui gonfle sans borne. On tronque à 200
    éléments après chaque merge.
+
+Ces trois comportements sont couverts par des tests unitaires sur `lib/feed.ts` — c'est la seule
+partie du Realtime qui se teste sans base joignable, et c'est celle qui contient les bugs.
+
+**Indicateur de connexion.** La barre de filtres affiche l'état de l'abonnement : *En direct*,
+*Connexion*, ou *Différé 60 s*. Sur échec ou coupure (`CHANNEL_ERROR`, `TIMED_OUT`, `CLOSED`), on
+bascule sur une relecture complète toutes les 60 s — le repli prévu au §10. Un feed figé sans le
+dire est pire qu'un feed en différé qui l'annonce.
 
 Gestion des événements :
 
@@ -620,9 +632,9 @@ images: {
 
 | Phase | Contenu | Sortie vérifiable | Charge |
 |---|---|---|---|
-| **0** | Projet Supabase, migrations, RLS, Realtime, scaffold Next.js | `select` anon OK, `insert` anon refusé | 0,5 j |
-| **1** | Seed 24 lignes, `MercatoCard`, `Crest`, `StatusBadge`, `ProbabilityGauge`, grille | Feed statique complet, responsive 1/2/3 col | 1 j |
-| **2** | `FilterBar`, filtres + URL, Realtime + les 3 correctifs §4.2 | `insert` SQL manuel → carte qui apparaît seule | 0,5 j |
+| **0** ✅ | Projet Supabase, migrations, RLS, Realtime, scaffold Next.js | `select` anon OK, `insert` anon refusé | 0,5 j |
+| **1** ✅ | Seed 24 lignes, `MercatoCard`, `Crest`, `StatusBadge`, `ProbabilityGauge`, grille | Feed statique complet, responsive 1/2/3 col | 1 j |
+| **2** ✅ | `FilterBar`, filtres + URL, Realtime + les 3 correctifs §4.2 | `insert` SQL manuel → carte qui apparaît seule | 0,5 j |
 | **3** | `lib/ingest.ts`, `format.ts`, route cron, fixtures JSON | `POST /api/cron/ingest` rejouable sans doublon | 1 j |
 | **4a** | Scraper Transfermarkt + `sources/apifootball.ts` + `media_cache` | Vraies rumeurs avec vraies probabilités | 1 j |
 | **4b** | `scripts/cutout.py`, bucket Storage, workflow Actions, propagation Realtime | Portrait détouré qui apparaît en direct sur une carte ouverte | 1 j |
@@ -728,6 +740,38 @@ réduisait `PSV Eindhoven` à `PE` en ignorant l'acronyme déjà présent.
 
 **Décision d'implémentation** : Next.js **16** et non 15. C'est la version stable au moment du
 scaffold, sur un projet neuf sans dette à porter.
+
+### Phase 2 — vivant *(livrée)*
+
+| Livrable | Détail |
+|---|---|
+| `lib/filters.ts` | Les 4 filtres et le seuil « chaud », partagés serveur/client |
+| `lib/feed.ts` | `mergeRows()` et `maxCreatedAt()` — logique pure, testable sans réseau |
+| `FilterBar` | Onglets comptés, soulignement de l'actif, indicateur de connexion |
+| `MercatoFeed` | État, abonnement Realtime, rattrapage, repli polling, synchronisation d'URL |
+| `app/preview/feed` | Banc d'interaction sur fixtures |
+
+**Le filtre initial est lu côté serveur**, pas via `useSearchParams` : le premier rendu part déjà
+sur le bon onglet, la page n'a pas besoin d'une frontière Suspense, et `?f=` étant une entrée
+utilisateur, toute valeur inconnue retombe sur « Tous ».
+
+**Vérifications.** 13 tests `node:test` sur la fusion et les filtres — dédoublonnage d'un événement
+rejoué, remplacement en place sur `UPDATE`, tri sur `published_at` et non sur l'ordre d'arrivée,
+troncature à 200 en gardant les plus récentes, suppression, non-mutation de l'entrée, repère de
+rattrapage, bornes du seuil à 70 (69 exclu, 70 inclus), rejet des clés de filtre inconnues.
+Puis 10 vérifications au navigateur : compteurs, filtrage réel, écriture et nettoyage de `?f=`,
+lien profond actif dès le rendu serveur, état vide propre à chaque filtre, aucun débordement
+horizontal en 1440 / 768 / 390 px.
+
+**Écart assumé sur les specs.** Le §4.2 prévoyait une flèche de tendance visible 5 s après un
+`UPDATE`. La tendance étant stockée en base (`previous_probability`), la masquer ferait perdre une
+information durable. Retenu à la place : la tendance reste affichée en permanence, et c'est la
+**carte** qui pulse 1,5 s pour signaler qu'elle vient de changer. Sur une grille de 60 cartes,
+c'est ce repérage-là qui manquait.
+
+**Ce que l'egress bloqué a permis de vérifier.** Realtime étant injoignable depuis la session,
+l'indicateur bascule sur *Différé 60 s* et le repli du §10 s'exécute réellement. Le chemin nominal
+(`SUBSCRIBED`, rattrapage, événements) reste à valider sur une base joignable.
 
 ### Ce qui reste à faire à la main
 
