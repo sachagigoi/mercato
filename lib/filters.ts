@@ -1,4 +1,4 @@
-import type { Transfer } from "@/lib/types";
+import type { Transfer } from "./types.ts";
 
 export type FilterKey = "all" | "official" | "hot" | "extension";
 

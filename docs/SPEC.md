@@ -3,8 +3,9 @@
 > Feed temps réel de transferts et rumeurs football. Next.js 16 (App Router) · Supabase · Tailwind v4.
 > Document de référence unique pour le MVP.
 
-**État : Phases 0, 1 et 2 livrées.** Base Supabase en ligne et vérifiée, carte et grille en place,
-filtres et Realtime branchés, bancs de rendu et d'interaction à `/preview` — cf. §11.
+**État : Phases 0 à 3 livrées.** Base en ligne et vérifiée, carte et grille en place, filtres et
+Realtime branchés, pipeline d'ingestion idempotent et route cron protégée — cf. §11.
+Reste la Phase 4 : scraper réel et détourage.
 
 ---
 
@@ -240,7 +241,7 @@ app/
   layout.tsx                    # thème sombre, fonts, metadata, OG
   page.tsx                      # RSC : fetch initial 60 lignes
   globals.css                   # @theme Tailwind v4 + tokens
-  api/cron/ingest/route.ts      # runner d'ingestion (protégé par CRON_SECRET)
+  api/cron/ingest/route.ts      # runner d'ingestion (GET pour Vercel Cron, POST manuel)
   preview/page.tsx              # banc de rendu des composants (§4.8)
   preview/feed/page.tsx         # banc d'interaction du feed (§4.8)
 components/
@@ -255,8 +256,12 @@ lib/
   supabase/client.ts            # navigateur (anon)
   supabase/server.ts            # RSC (anon)
   supabase/admin.ts             # service_role — import 'server-only' obligatoire
-  ingest.ts                     # normalisation + upsert (cœur du brief §3.3)
-  sources/transfermarkt.ts      # scraper rumeurs
+  ingest.ts                     # validation, dédoublonnage, normalisation, upsert
+  ingest.test.ts                # 14 tests, dont les 3 exécutions sans doublon
+  format.test.ts                # 15 tests, dont le parseur de montants
+  supabase/store.ts             # implémentation Supabase des dépôts d'ingestion
+  sources/fixtures.ts           # source de démonstration (Phase 3)
+  sources/transfermarkt.ts      # scraper rumeurs (Phase 4)
   sources/apifootball.ts        # résolution visuels + cache + budget
   format.ts                     # parsing montants, emoji drapeau, temps relatif
   accent.ts                     # accentOf() + map de classes littérales
@@ -485,6 +490,20 @@ export function ingest(rows: RawTransferInput[]): Promise<IngestReport>;
    sans logo vaut mieux qu'une carte absente.**
 4. **Calcul de la tendance** — avant l'upsert, lecture des `probability_score` courants pour les
    `external_id` du lot ; l'ancienne valeur part dans `previous_probability`.
+
+   **On ne déplace le repère que si la probabilité a bougé.** Réécrire
+   `previous = current` à chaque passage effacerait la tendance dès la première moisson sans
+   changement : la flèche ↑12 disparaîtrait vingt minutes après être apparue, alors que
+   l'information est toujours vraie.
+
+4 bis. **Stabilité de `published_at`** — la date n'est prise de la source que si elle en fournit
+   une ; sinon on reprend celle déjà en base. Sans cette règle, chaque passage du cron repousserait
+   toutes les rumeurs en tête du feed et le tri chronologique perdrait tout son sens.
+
+4 ter. **Dédoublonnage intra-lot** — une page source liste régulièrement deux fois la même rumeur
+   (bloc « top », puis bloc « récentes »). Envoyer les deux dans un seul `INSERT` fait échouer
+   Postgres : *ON CONFLICT DO UPDATE command cannot affect row a second time*. La dernière
+   occurrence gagne, elle porte la probabilité la plus fraîche.
 5. **Upsert** :
    ```ts
    supabaseAdmin.from('transfers')
@@ -498,8 +517,10 @@ export function ingest(rows: RawTransferInput[]): Promise<IngestReport>;
 
 `app/api/cron/ingest/route.ts`, `runtime = 'nodejs'`, `maxDuration = 60`.
 
-- Rejette (401) toute requête sans `Authorization: Bearer ${CRON_SECRET}`. **Un endpoint d'écriture
-  ouvert est une porte d'entrée pour polluer la base.**
+- Rejette (401) toute requête sans `Authorization: Bearer ${CRON_SECRET}`, en comparaison à durée
+  constante. **Un `CRON_SECRET` absent ferme l'endpoint au lieu de l'ouvrir** : c'est un point
+  d'écriture sur la base, le défaut sûr est le refus.
+- `GET` pour Vercel Cron, `POST` pour un déclenchement manuel — même traitement.
 - Déclenché par Vercel Cron, `*/30 * * * *`.
 - Retourne un `IngestReport` JSON : `{ scanned, inserted, updated, skipped, apiCallsUsed, ms }`.
 
@@ -635,7 +656,7 @@ images: {
 | **0** ✅ | Projet Supabase, migrations, RLS, Realtime, scaffold Next.js | `select` anon OK, `insert` anon refusé | 0,5 j |
 | **1** ✅ | Seed 24 lignes, `MercatoCard`, `Crest`, `StatusBadge`, `ProbabilityGauge`, grille | Feed statique complet, responsive 1/2/3 col | 1 j |
 | **2** ✅ | `FilterBar`, filtres + URL, Realtime + les 3 correctifs §4.2 | `insert` SQL manuel → carte qui apparaît seule | 0,5 j |
-| **3** | `lib/ingest.ts`, `format.ts`, route cron, fixtures JSON | `POST /api/cron/ingest` rejouable sans doublon | 1 j |
+| **3** ✅ | `lib/ingest.ts`, `format.ts`, route cron, fixtures JSON | `POST /api/cron/ingest` rejouable sans doublon | 1 j |
 | **4a** | Scraper Transfermarkt + `sources/apifootball.ts` + `media_cache` | Vraies rumeurs avec vraies probabilités | 1 j |
 | **4b** | `scripts/cutout.py`, bucket Storage, workflow Actions, propagation Realtime | Portrait détouré qui apparaît en direct sur une carte ouverte | 1 j |
 | **5** | *Hors MVP* — microservice Transfermarkt, auth/favoris, notifications push | — | — |
@@ -772,6 +793,46 @@ c'est ce repérage-là qui manquait.
 **Ce que l'egress bloqué a permis de vérifier.** Realtime étant injoignable depuis la session,
 l'indicateur bascule sur *Différé 60 s* et le repli du §10 s'exécute réellement. Le chemin nominal
 (`SUBSCRIBED`, rattrapage, événements) reste à valider sur une base joignable.
+
+### Phase 3 — pipeline *(livrée)*
+
+| Livrable | Détail |
+|---|---|
+| `lib/ingest.ts` | Validation Zod, dédoublonnage de lot, normalisation, upsert par lots de 50 |
+| `lib/format.ts` | `parseFee()` / `formatFee()` / `normalizeName()` |
+| `lib/supabase/store.ts` | Implémentation Supabase des dépôts `TransferStore` et `MediaStore` |
+| `lib/sources/fixtures.ts` | Source de démonstration, à la signature du futur scraper |
+| `app/api/cron/ingest` | Route protégée, `GET` (Vercel Cron) et `POST` (manuel) |
+| `vercel.json` | Cron `*/30 * * * *` |
+
+**Décision d'architecture : `ingest()` ne connaît que des interfaces**, pas Supabase. `TransferStore`
+et `MediaStore` sont injectés. Ce n'est pas de l'abstraction gratuite — c'est ce qui rend le critère
+d'acceptation « aucun doublon après 3 exécutions » vérifiable sans base ni réseau, contre un dépôt
+en mémoire qui reproduit les contraintes réelles de Postgres.
+
+**Deux règles absentes des specs initiales**, trouvées en écrivant le pipeline, chacune corrigeant
+un bug qui n'aurait pas fait échouer le critère des 3 exécutions :
+
+1. `previous_probability` n'est déplacé que si la probabilité a changé — sinon la tendance
+   s'efface à la première moisson sans changement.
+2. `published_at` n'est repris de la source que si elle en fournit un — sinon chaque cron repousse
+   tout le feed en tête.
+
+**Vérifications.** 42 tests `node:test` au total (14 sur l'ingestion, 15 sur le formatage, 13 de la
+Phase 2). Le dépôt en mémoire lève l'erreur réelle de Postgres
+*« cannot affect row a second time »* quand une clé apparaît deux fois dans un lot, ce qui rend le
+dédoublonnage réellement testé.
+
+Côté base, en SQL direct : trois upserts identiques laissent 3 lignes et 3 `external_id` distincts ;
+un lot portant deux fois la même clé est bien refusé par Postgres (`cardinality_violation`), ce qui
+confirme la fidélité du double de test. Lignes de vérification supprimées, les 24 du seed intactes.
+
+Côté route, la porte d'authentification a été éprouvée : sans en-tête, jeton faux, bon préfixe
+tronqué et mauvais schéma renvoient tous 401 ; le bon jeton passe.
+
+**Non vérifié.** Le trajet complet route → Supabase reste bloqué par l'egress de la session : avec
+le bon jeton, la réponse est un 500 portant `Host not in allowlist`. Le pipeline s'exécute donc
+jusqu'à la première requête réseau, pas au-delà.
 
 ### Ce qui reste à faire à la main
 

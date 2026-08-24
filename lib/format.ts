@@ -60,3 +60,86 @@ export function probabilityTrend(
   if (Math.abs(delta) < 3) return null;
   return { delta, direction: delta > 0 ? "up" : "down" };
 }
+
+/**
+ * Clé de cache d'un nom : minuscules, sans accents ni ponctuation.
+ * « Atlético Madrid » et « Atletico  Madrid! » doivent toucher la même entrée.
+ */
+export function normalizeName(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")  // marques diacritiques combinantes
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+export type ParsedFee = {
+  /** Libellé affiché sur la carte, déjà francisé. */
+  transfer_fee: string;
+  /** Valeur en euros, ou null quand le montant n'est pas chiffrable (prêt sec, inconnu). */
+  fee_value_eur: number | null;
+};
+
+const LOAN = /\b(loan|leihe|pr[eê]t)\b/i;
+const FREE = /\b(free|abl[oö]sefrei|libre|bosman)\b/i;
+const UNKNOWN = /^[\s?\-–—.]*$/;
+
+/** Montant chiffré : « €45.00m », « 850k », « 1.2 bn », « 45 M€ ». */
+const AMOUNT = /(\d+(?:[.,]\d+)?)\s*(bn|mrd|m|k|th)?\b/i;
+
+const SCALE: Record<string, number> = {
+  bn: 1_000_000_000,
+  mrd: 1_000_000_000,
+  m: 1_000_000,
+  k: 1_000,
+  th: 1_000,
+};
+
+/** Formate un montant en euros pour l'affichage, en notation française. */
+export function formatFee(euros: number): string {
+  if (euros === 0) return "Libre";
+  if (euros >= 1_000_000_000) {
+    const bn = euros / 1_000_000_000;
+    const shown = Number.isInteger(bn) ? String(bn) : bn.toFixed(1).replace(".", ",");
+    return `${shown} Md€`;
+  }
+  if (euros >= 1_000_000) {
+    const m = euros / 1_000_000;
+    // 45 M€ plutôt que 45,0 M€ ; 1,5 M€ plutôt que 1,5000000000000002 M€
+    const shown = Number.isInteger(m) ? String(m) : m.toFixed(1).replace(".", ",");
+    return `${shown} M€`;
+  }
+  if (euros >= 1_000) {
+    const k = euros / 1_000;
+    const shown = Number.isInteger(k) ? String(k) : k.toFixed(1).replace(".", ",");
+    return `${shown} k€`;
+  }
+  return `${euros} €`;
+}
+
+/**
+ * Normalise un montant brut de source en couple (libellé, valeur).
+ *
+ * Le libellé est francisé ici, une fois, à l'ingestion — jamais au rendu : la
+ * carte doit pouvoir afficher `transfer_fee` tel quel. La valeur numérique
+ * existe en parallèle parce qu'on ne trie ni ne filtre sur du texte.
+ *
+ * L'ordre des tests compte : « loan fee: €2.00m » est d'abord un prêt.
+ */
+export function parseFee(raw?: string | null): ParsedFee {
+  const value = (raw ?? "").trim();
+  if (UNKNOWN.test(value)) return { transfer_fee: "—", fee_value_eur: null };
+
+  if (LOAN.test(value)) return { transfer_fee: "Prêt", fee_value_eur: null };
+  if (FREE.test(value)) return { transfer_fee: "Libre", fee_value_eur: 0 };
+
+  const match = AMOUNT.exec(value);
+  if (!match) return { transfer_fee: "—", fee_value_eur: null };
+
+  const amount = Number(match[1].replace(",", "."));
+  if (!Number.isFinite(amount)) return { transfer_fee: "—", fee_value_eur: null };
+
+  const euros = Math.round(amount * (SCALE[match[2]?.toLowerCase() ?? ""] ?? 1));
+  return { transfer_fee: formatFee(euros), fee_value_eur: euros };
+}
