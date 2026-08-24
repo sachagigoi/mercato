@@ -42,3 +42,21 @@ values
   ('manual:023','Mateo Fernández','es','Real Madrid','https://media.api-sports.io/football/teams/541.png','Real Madrid','https://media.api-sports.io/football/teams/541.png','—',null,'EXTENSION',100,null,'Prolongation jusqu''en 2031','Démo — donnée fictive',now() - interval '4 days 2 hours'),
   ('manual:024','Idrissa Camara','sn','RC Lens',null,'SSC Naples','https://media.api-sports.io/football/teams/492.png','Prêt avec option',null,'RUMOUR',62,49,'Discussions avancées','Démo — donnée fictive',now() - interval '4 days 18 hours')
 on conflict (external_id) do nothing;
+
+-- ---------------------------------------------------------------------------
+-- Gabarits de portrait — Phase 1 uniquement.
+--
+-- Le feed doit exercer en permanence les TROIS niveaux de la chaîne de repli
+-- (§6.4 des specs) : détouré, masque circulaire, silhouette. Sans ces lignes,
+-- 100 % du seed tomberait au niveau 3 et deux des trois rendus ne seraient
+-- jamais regardés avant la Phase 4b — trop tard pour corriger le design.
+--
+-- Les visuels sont des gabarits sans visage, dans public/demo/.
+-- Remplacés par les vrais portraits dès que le pipeline tourne (Phase 4).
+-- ---------------------------------------------------------------------------
+
+update public.transfers set player_cutout = '/demo/portrait-cutout.png'
+ where external_id in ('manual:001','manual:008','manual:017');
+
+update public.transfers set player_photo = '/demo/portrait-photo.png'
+ where external_id in ('manual:002','manual:013','manual:024');

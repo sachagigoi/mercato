@@ -1,11 +1,10 @@
 # Mercato — Spécifications techniques MVP
 
-> Feed temps réel de transferts et rumeurs football. Next.js 15 (App Router) · Supabase · Tailwind v4.
+> Feed temps réel de transferts et rumeurs football. Next.js 16 (App Router) · Supabase · Tailwind v4.
 > Document de référence unique pour le MVP.
 
-**État : Phase 0 livrée.** Le projet Supabase `mercato` est en ligne (`jfqtgphbpogfvofgtnax`,
-eu-west-3, plan gratuit). Schéma, RLS, Realtime, bucket Storage et seed de 24 lignes sont appliqués
-et vérifiés — cf. §11.
+**État : Phases 0 et 1 livrées.** Base Supabase en ligne et vérifiée, application Next.js
+échafaudée, `MercatoCard` et la grille responsive en place, banc de rendu à `/preview` — cf. §11.
 
 ---
 
@@ -68,7 +67,7 @@ doublons dans le feed. C'est le bug numéro un de tout pipeline de scraping.
 
 | Couche | Choix | Note |
 |---|---|---|
-| Framework | Next.js 15, App Router, TypeScript strict | RSC pour le fetch initial |
+| Framework | Next.js 16, App Router, TypeScript strict | RSC pour le fetch initial |
 | Styling | Tailwind CSS v4 (config CSS-first `@theme`) | dark-only, pas de toggle |
 | DB / Realtime | Supabase (Postgres 17, région `eu-west-3`) | projet dédié, plan gratuit (0 €/mois) |
 | Rumeurs | Scraper Cheerio → `transfermarkt.us/statistik/aktuellegeruechte` | Route Handler, pas de service externe |
@@ -242,6 +241,7 @@ app/
   page.tsx                      # RSC : fetch initial 60 lignes
   globals.css                   # @theme Tailwind v4 + tokens
   api/cron/ingest/route.ts      # runner d'ingestion (protégé par CRON_SECRET)
+  preview/page.tsx              # banc de rendu des composants (§4.8)
 components/
   MercatoFeed.tsx               # 'use client' — état, realtime, filtres
   FilterBar.tsx                 # 'use client' — 4 onglets
@@ -249,6 +249,7 @@ components/
   ProbabilityGauge.tsx          # jauge néon + tendance
   StatusBadge.tsx               # pastille colorée
   Crest.tsx                     # logo club, fallback initiales
+  PlayerPortrait.tsx            # portrait, chaîne de repli à 3 niveaux
 lib/
   supabase/client.ts            # navigateur (anon)
   supabase/server.ts            # RSC (anon)
@@ -257,7 +258,10 @@ lib/
   sources/transfermarkt.ts      # scraper rumeurs
   sources/apifootball.ts        # résolution visuels + cache + budget
   format.ts                     # parsing montants, emoji drapeau, temps relatif
+  accent.ts                     # accentOf() + map de classes littérales
+  fixtures.ts                   # jeu de cas limites du banc de rendu
   types.ts                      # types générés depuis Supabase
+public/demo/                    # gabarits de portrait (Phase 1)
 scripts/
   cutout.py                     # worker de détourage (hors bundle Next.js)
   requirements.txt              # rembg, pillow, httpx, supabase
@@ -406,6 +410,23 @@ Chaque onglet affiche son compteur. Le filtre actif est reflété dans l'URL (`?
 
 Dark natif : `<html class="dark">` en dur dans `layout.tsx`, plus `color-scheme: dark` pour que les
 scrollbars et contrôles natifs suivent. Pas de toggle clair au MVP.
+
+### 4.8 Banc de rendu (`/preview`)
+
+Une page hors feed qui rend `MercatoCard` contre des fixtures locales, sans jamais toucher la base.
+Elle couvre les états qu'un feed nominal ne montre pas et qui sont pourtant ceux qui cassent une
+carte en production :
+
+- les trois niveaux de portrait (§6.4), côte à côte ;
+- les quatre accents, dont la rumeur tiède qui doit retomber en gris ;
+- les bornes de la jauge, 0 % et 100 % ;
+- un nom de joueur et des noms de clubs qui débordent ;
+- une ligne réduite au strict minimum, tout le reste étant nul ;
+- la grille réelle, pour vérifier que les pieds de carte s'alignent quand des cartes de hauteurs
+  différentes tombent sur la même ligne.
+
+C'est le point de retour après chaque retouche du design, et le seul endroit où l'on peut juger la
+carte sans dépendre de la disponibilité de la base.
 
 ---
 
@@ -651,7 +672,9 @@ même si la donnée est fausse — c'est ce qui permet d'arbitrer le design tôt
 
 ---
 
-## 11. État de la Phase 0 (livrée)
+## 11. État des phases
+
+### Phase 0 — fondations *(livrée)*
 
 Projet Supabase **`mercato`** — `jfqtgphbpogfvofgtnax`, région `eu-west-3`, plan gratuit (0 €/mois).
 URL : `https://jfqtgphbpogfvofgtnax.supabase.co`
@@ -678,8 +701,46 @@ Seed appliqué : 24 lignes (`supabase/seed.sql`). Types régénérés dans `lib/
 | Advisors sécurité Supabase | 1 INFO `rls_enabled_no_policy` sur `media_cache` — **comportement voulu** |
 | `lib/types.ts` sous `tsc --strict` | aucune erreur ✅ |
 
+### Phase 1 — la carte *(livrée)*
+
+Application Next.js 16 échafaudée à la main (pas de `create-next-app` : le dépôt portait déjà
+`docs/`, `lib/` et `supabase/`). Tailwind v4 en configuration CSS-first, fonts Geist via
+`next/font`, aucune librairie de composants.
+
+| Livrable | Détail |
+|---|---|
+| `MercatoCard` | En-tête club → club, portrait, badge, montant, jauge, pied traçable |
+| `PlayerPortrait` | Chaîne de repli à 3 niveaux, dégradation automatique sur image cassée |
+| `Crest` | Écusson avec repli initiales, sensible aux acronymes (`PSV Eindhoven` → `PSV`) |
+| `StatusBadge` | Pastille, couleur dérivée de `accentOf()`, libellé tronqué avec `title` |
+| `ProbabilityGauge` | Barre néon + tendance, `role="progressbar"`, transition prête pour Realtime |
+| `app/page.tsx` | Server Component, tri `published_at desc`, grille 1/2/3 colonnes |
+| `app/preview` | Banc de rendu (§4.8) |
+
+Vérifié au navigateur (Chromium, captures en 1440 et 390 px) : aucun débordement horizontal,
+les pieds de carte s'alignent en grille étirée, les trois niveaux de portrait et les quatre
+accents rendent comme prévu.
+
+Trois défauts trouvés et corrigés à cette occasion, tous invisibles à la lecture du code :
+le portrait détouré paraissait plus petit que le masque circulaire alors qu'il doit dominer ;
+les libellés de statut longs passaient sur deux lignes et cassaient la pastille ; `clubInitials`
+réduisait `PSV Eindhoven` à `PE` en ignorant l'acronyme déjà présent.
+
+**Décision d'implémentation** : Next.js **16** et non 15. C'est la version stable au moment du
+scaffold, sur un projet neuf sans dette à porter.
+
 ### Ce qui reste à faire à la main
 
 La `service_role` n'est **pas** récupérable par outillage et n'a rien à faire dans le dépôt :
 à copier depuis *Supabase → Project Settings → API* vers les variables Vercel **et** les secrets
 GitHub Actions. Idem pour `API_FOOTBALL_KEY` et un `CRON_SECRET` aléatoire.
+
+### Note d'environnement — sessions Claude Code sur le web
+
+Le serveur Next.js lancé **dans une session Claude Code web** ne joint pas
+`jfqtgphbpogfvofgtnax.supabase.co` : le proxy d'egress répond `Host not in allowlist`. Le feed
+affiche alors son état d'erreur, ce qui est le comportement voulu — mais ce n'est pas un bug de
+l'application. En local et sur Vercel, l'accès est direct et fonctionne.
+
+Pour lever la restriction en session web, ajouter l'hôte aux réglages d'egress de l'environnement.
+Sans cela, `/preview` reste le moyen de travailler le design, puisqu'il ne dépend pas de la base.
