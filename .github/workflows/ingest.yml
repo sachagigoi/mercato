@@ -1,0 +1,69 @@
+name: Ingestion des rumeurs
+
+# Le cron d'ingestion vit ici et non dans vercel.json.
+#
+# Vercel plafonne les cron jobs à UN PAR JOUR sur le plan Hobby, et refuse le
+# déploiement avec « Hobby accounts are limited to daily cron jobs » dès qu'une
+# expression est plus fréquente. Une moisson quotidienne n'a aucun sens pour un
+# feed mercato, où l'intérêt est justement de voir bouger les probabilités.
+#
+# GitHub Actions fait le même travail toutes les 30 minutes, gratuitement, et
+# le mécanisme est déjà éprouvé par le workflow de détourage. La route reste
+# protégée par CRON_SECRET : ce workflow ne fait que l'appeler.
+#
+# Sur un plan Vercel Pro, on peut revenir au cron natif en remettant le bloc
+# `crons` dans vercel.json et en désactivant ce workflow.
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Déclencher l'ingestion
+        env:
+          BASE_URL: ${{ secrets.MERCATO_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BASE_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "MERCATO_URL et CRON_SECRET sont requis." >&2
+            exit 2
+          fi
+
+          # --fail-with-body : on veut le corps de la réponse même sur erreur,
+          # c'est lui qui porte le message utile (source injoignable, etc.).
+          curl --silent --show-error --fail-with-body \
+               --max-time 120 \
+               -X POST "${BASE_URL%/}/api/cron/ingest" \
+               -H "Authorization: Bearer ${CRON_SECRET}" \
+            | tee rapport.json
+
+          echo
+
+          # Un rapport où rien n'a été moissonné signale une source qui a changé
+          # de structure : le job doit le dire, pas passer au vert en silence.
+          python3 - <<'PY'
+          import json, sys
+
+          with open("rapport.json", encoding="utf-8") as f:
+              report = json.load(f)
+
+          ingestion = report.get("ingestion", {})
+          scanned = ingestion.get("scanned", 0)
+          print(f"scannés={scanned} insérés={ingestion.get('inserted')} "
+                f"mis à jour={ingestion.get('updated')} écartés={ingestion.get('skipped')}")
+
+          if scanned == 0:
+              print("Aucune ligne moissonnée : la page source a probablement changé.", file=sys.stderr)
+              sys.exit(1)
+          PY
