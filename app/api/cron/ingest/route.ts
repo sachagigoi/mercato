@@ -2,10 +2,15 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { ingest } from "@/lib/ingest";
+import { resolveMarketValues } from "@/lib/market-value";
 import { resolveMedia } from "@/lib/resolve-media";
 import { createApiFootballHttp } from "@/lib/sources/apifootball";
-import { fetchRumours } from "@/lib/sources/transfermarkt";
-import { createMediaResolutionStores, createSupabaseStores } from "@/lib/supabase/store";
+import { createHtmlFetcher, fetchRumours } from "@/lib/sources/transfermarkt";
+import {
+  createMarketValueStore,
+  createMediaResolutionStores,
+  createSupabaseStores,
+} from "@/lib/supabase/store";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -44,7 +49,17 @@ async function run(request: Request) {
     // que d'attendre le cron suivant pour que les cartes aient leurs logos.
     const media = await resolveMediaIfConfigured();
 
-    return NextResponse.json({ ingestion, media });
+    // Les valeurs de marché ferment la marche : elles demandent une fiche par
+    // joueur, quand la moisson et les visuels ne coûtent qu'une page. Les
+    // placer en dernier garantit qu'un incident sur Transfermarkt ne prive
+    // jamais le feed de ses rumeurs — il le prive au pire de ses montants,
+    // qui arriveront au passage suivant.
+    const marketValues = await resolveMarketValues({
+      queue: createMarketValueStore(),
+      http: createHtmlFetcher(),
+    });
+
+    return NextResponse.json({ ingestion, media, marketValues });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "Erreur inconnue";
     return NextResponse.json({ error: message }, { status: 500 });

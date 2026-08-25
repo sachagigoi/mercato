@@ -1,6 +1,6 @@
 import { MercatoFeed } from "@/components/MercatoFeed";
 import { MAX_ROWS } from "@/lib/feed";
-import { DEFAULT_FILTER, isFilterKey, type FilterKey } from "@/lib/filters";
+import { ALL_COUNTRIES, DEFAULT_FILTER, isFilterKey, type FilterKey } from "@/lib/filters";
 import { createServerClient } from "@/lib/supabase/server";
 import type { Transfer } from "@/lib/types";
 
@@ -29,7 +29,7 @@ async function getFeed(): Promise<{ rows: Transfer[]; error: string | null }> {
 export default async function Home({
   searchParams,
 }: {
-  searchParams: Promise<{ f?: string }>;
+  searchParams: Promise<{ f?: string; p?: string }>;
 }) {
   const { rows, error } = await getFeed();
 
@@ -37,8 +37,14 @@ export default async function Home({
   // useSearchParams : le premier rendu part déjà sur le bon onglet, et la page
   // n'a pas besoin d'une frontière Suspense. `f` vient de l'URL, donc d'une
   // entrée utilisateur : tout ce qui n'est pas une clé connue retombe sur « Tous ».
-  const { f } = await searchParams;
+  const { f, p } = await searchParams;
   const initialFilter: FilterKey = isFilterKey(f) ? f : DEFAULT_FILTER;
+
+  // Le pays n'a pas de liste fermée à valider — elle est dérivée des lignes
+  // chargées, qui changent à chaque moisson. On se contente donc d'assainir la
+  // forme ; une clé qui ne correspond à aucun pays du jeu retombe d'elle-même
+  // sur « Tous les pays », côté client, quand la liste des puces est calculée.
+  const initialCountry = typeof p === "string" && /^[a-z0-9-]{1,40}$/.test(p) ? p : ALL_COUNTRIES;
 
   return (
     <main className="mx-auto max-w-7xl px-5 pb-24 sm:px-8">
@@ -56,7 +62,11 @@ export default async function Home({
           Le feed n&apos;a pas pu être chargé : {error}
         </p>
       ) : (
-        <MercatoFeed initialRows={rows} initialFilter={initialFilter} />
+        <MercatoFeed
+          initialRows={rows}
+          initialFilter={initialFilter}
+          initialCountry={initialCountry}
+        />
       )}
     </main>
   );

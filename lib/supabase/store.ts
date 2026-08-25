@@ -9,6 +9,7 @@ import {
   type TransferStore,
 } from "@/lib/ingest";
 import { normalizeName } from "@/lib/format";
+import type { MarketValueQueue, PendingValue } from "@/lib/market-value";
 import type { DailyBudget, MediaQueue, PendingMedia } from "@/lib/resolve-media";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -180,4 +181,71 @@ export function createMediaResolutionStores(): { queue: MediaQueue; budget: Dail
   };
 
   return { queue, budget };
+}
+
+/**
+ * Dépôt de la file des valeurs de marché.
+ *
+ * Séparé lui aussi, pour la même raison que la résolution de visuels : il ne
+ * partage avec l'ingestion qu'une table, pas un cycle de vie. Il travaille en
+ * revanche sur `transfers` directement plutôt que sur une table de cache — la
+ * valeur appartient au joueur, mais elle s'affiche sur la rumeur, et la
+ * dénormaliser évite une jointure que ni RLS ni Realtime ne rendraient simple.
+ */
+export function createMarketValueStore(): MarketValueQueue {
+  const supabase = createAdminClient();
+
+  return {
+    async listStale(limit, staleBefore) {
+      // PostgREST ne sait pas faire de `distinct on`. On surdimensionne la
+      // lecture puis on replie côté client : un joueur cité dans plusieurs
+      // rumeurs occupe plusieurs lignes, et le lot doit compter des joueurs.
+      const { data, error } = await supabase
+        .from("transfers")
+        .select("tm_player_id, player_name, market_value_fetched_at")
+        .not("tm_player_id", "is", null)
+        .or(
+          `market_value_fetched_at.is.null,market_value_fetched_at.lt.${staleBefore.toISOString()}`,
+        )
+        .order("market_value_fetched_at", { ascending: true, nullsFirst: true })
+        .limit(limit * 4);
+
+      if (error) throw new Error(`file des valeurs de marché : ${error.message}`);
+
+      const byPlayer = new Map<string, PendingValue>();
+      for (const row of data ?? []) {
+        if (!row.tm_player_id || byPlayer.has(row.tm_player_id)) continue;
+        byPlayer.set(row.tm_player_id, {
+          tm_player_id: row.tm_player_id,
+          player_name: row.player_name,
+        });
+        if (byPlayer.size === limit) break;
+      }
+      return [...byPlayer.values()];
+    },
+
+    async apply(tmPlayerId, value) {
+      // Toutes les rumeurs du joueur d'un coup : une requête réseau, une
+      // requête SQL, et autant d'événements Realtime que de cartes concernées.
+      const { error } = await supabase
+        .from("transfers")
+        .update({
+          market_value_eur: value.market_value_eur,
+          market_value_label: value.market_value_label,
+          market_value_fetched_at: new Date().toISOString(),
+        })
+        .eq("tm_player_id", tmPlayerId);
+
+      if (error) throw new Error(`écriture de la valeur de marché : ${error.message}`);
+    },
+
+    async markMissed(tmPlayerId) {
+      const { error } = await supabase
+        .from("transfers")
+        .update({ market_value_fetched_at: new Date().toISOString() })
+        .eq("tm_player_id", tmPlayerId);
+
+      if (error) throw new Error(`horodatage de la tentative : ${error.message}`);
+    },
+  };
 }

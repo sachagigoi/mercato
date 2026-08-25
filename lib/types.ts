@@ -38,7 +38,6 @@ export type Database = {
           cutout_attempts: number
           cutout_status: string
           cutout_url: string | null
-          display_name: string | null
           fetched_at: string
           id: number
           image_url: string | null
@@ -51,7 +50,6 @@ export type Database = {
           cutout_attempts?: number
           cutout_status?: string
           cutout_url?: string | null
-          display_name?: string | null
           fetched_at?: string
           id?: never
           image_url?: string | null
@@ -64,7 +62,6 @@ export type Database = {
           cutout_attempts?: number
           cutout_status?: string
           cutout_url?: string | null
-          display_name?: string | null
           fetched_at?: string
           id?: never
           image_url?: string | null
@@ -83,6 +80,9 @@ export type Database = {
           from_club_name: string | null
           id: string
           is_published: boolean
+          market_value_eur: number | null
+          market_value_fetched_at: string | null
+          market_value_label: string | null
           nationality_code: string | null
           player_cutout: string | null
           player_name: string
@@ -93,8 +93,12 @@ export type Database = {
           source: string | null
           source_url: string | null
           status_badge: string | null
+          tm_player_id: string | null
           to_club_logo: string | null
           to_club_name: string | null
+          to_competition: string | null
+          to_country_code: string | null
+          to_country_name: string | null
           transfer_fee: string | null
           type: Database["public"]["Enums"]["transfer_type"]
           updated_at: string
@@ -107,6 +111,9 @@ export type Database = {
           from_club_name?: string | null
           id?: string
           is_published?: boolean
+          market_value_eur?: number | null
+          market_value_fetched_at?: string | null
+          market_value_label?: string | null
           nationality_code?: string | null
           player_cutout?: string | null
           player_name: string
@@ -117,8 +124,12 @@ export type Database = {
           source?: string | null
           source_url?: string | null
           status_badge?: string | null
+          tm_player_id?: string | null
           to_club_logo?: string | null
           to_club_name?: string | null
+          to_competition?: string | null
+          to_country_code?: string | null
+          to_country_name?: string | null
           transfer_fee?: string | null
           type: Database["public"]["Enums"]["transfer_type"]
           updated_at?: string
@@ -131,6 +142,9 @@ export type Database = {
           from_club_name?: string | null
           id?: string
           is_published?: boolean
+          market_value_eur?: number | null
+          market_value_fetched_at?: string | null
+          market_value_label?: string | null
           nationality_code?: string | null
           player_cutout?: string | null
           player_name?: string
@@ -141,8 +155,12 @@ export type Database = {
           source?: string | null
           source_url?: string | null
           status_badge?: string | null
+          tm_player_id?: string | null
           to_club_logo?: string | null
           to_club_name?: string | null
+          to_competition?: string | null
+          to_country_code?: string | null
+          to_country_name?: string | null
           transfer_fee?: string | null
           type?: Database["public"]["Enums"]["transfer_type"]
           updated_at?: string
@@ -154,7 +172,12 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      apply_player_cutout: {
+        Args: { p_cutout_url: string; p_name_normalized: string }
+        Returns: number
+      }
       consume_api_budget: { Args: { daily_cap?: number }; Returns: boolean }
+      normalize_name: { Args: { value: string }; Returns: string }
     }
     Enums: {
       transfer_type: "TRANSFER" | "RUMOUR" | "EXTENSION"

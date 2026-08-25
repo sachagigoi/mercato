@@ -1,6 +1,6 @@
 import { MercatoFeed } from "@/components/MercatoFeed";
 import { PREVIEW_CASES } from "@/lib/fixtures";
-import { DEFAULT_FILTER, isFilterKey, type FilterKey } from "@/lib/filters";
+import { ALL_COUNTRIES, DEFAULT_FILTER, isFilterKey, type FilterKey } from "@/lib/filters";
 
 export const metadata = { title: "Banc d'interaction — Mercato", robots: { index: false } };
 
@@ -18,11 +18,12 @@ export const metadata = { title: "Banc d'interaction — Mercato", robots: { ind
 export default async function PreviewFeed({
   searchParams,
 }: {
-  searchParams: Promise<{ f?: string; empty?: string }>;
+  searchParams: Promise<{ f?: string; p?: string; empty?: string }>;
 }) {
-  const { f, empty } = await searchParams;
+  const { f, p, empty } = await searchParams;
   const initialFilter: FilterKey = isFilterKey(f) ? f : DEFAULT_FILTER;
   const rows = empty === "1" ? [] : PREVIEW_CASES.map((c) => c.transfer);
+  const initialCountry = typeof p === "string" ? p : ALL_COUNTRIES;
 
   return (
     <main className="mx-auto max-w-7xl px-5 pb-24 sm:px-8">
@@ -34,12 +35,17 @@ export default async function PreviewFeed({
           Banc d&apos;interaction
         </h1>
         <p className="mt-3 max-w-xl text-sm text-slate-400">
-          <code className="text-slate-300">MercatoFeed</code> sur fixtures locales : filtres,
-          compteurs, synchronisation d&apos;URL et états vides. Aucun appel à Supabase.
+          <code className="text-slate-300">MercatoFeed</code> sur fixtures locales : filtres de
+          type et de pays, compteurs croisés, synchronisation d&apos;URL et états vides. Aucun
+          appel à Supabase.
         </p>
       </header>
 
-      <MercatoFeed initialRows={rows} initialFilter={initialFilter} />
+      <MercatoFeed
+        initialRows={rows}
+        initialFilter={initialFilter}
+        initialCountry={initialCountry}
+      />
     </main>
   );
 }

@@ -40,6 +40,16 @@ export function MercatoCard({ transfer: t, className = "" }: { transfer: Transfe
   // gras, sur une prolongation, ressemble à un bug plutôt qu'à une absence.
   const fee = t.transfer_fee && t.transfer_fee !== "—" ? t.transfer_fee : null;
 
+  // Deux chiffres possibles, qui ne disent pas la même chose : un prix convenu
+  // est un fait, une valeur de marché est une estimation. Le prix l'emporte
+  // quand il existe, et dans les deux cas la carte annonce lequel elle montre —
+  // « 45 M€ » posé nu sur une rumeur laisserait croire à un accord trouvé.
+  const amount = fee
+    ? { value: fee, label: "Montant" }
+    : t.market_value_label
+      ? { value: t.market_value_label, label: "Valeur estimée" }
+      : null;
+
   const body = (
     <>
       <header className="flex items-center gap-2 border-b border-slate-800 px-4 py-3">
@@ -91,18 +101,42 @@ export function MercatoCard({ transfer: t, className = "" }: { transfer: Transfe
             )}
           </h3>
 
-          <div className="mt-2">
+          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
             <StatusBadge label={t.status_badge} accent={accent} />
+
+            {/*
+              Le marché visé, à côté du statut plutôt qu'en pied de carte : c'est
+              la même nature d'information — de quoi situer la rumeur d'un coup
+              d'œil — et c'est ce que la barre de filtres découpe. Le championnat
+              est préféré au pays quand on l'a, parce qu'il est plus précis et
+              tout aussi lisible.
+            */}
+            {t.to_country_name && (
+              <span
+                className="inline-flex min-w-0 items-center gap-1 text-[11px] text-slate-500"
+                title={t.to_competition ? `${t.to_competition} · ${t.to_country_name}` : undefined}
+              >
+                {flagEmoji(t.to_country_code) && (
+                  <span aria-hidden>{flagEmoji(t.to_country_code)}</span>
+                )}
+                <span className="truncate">{t.to_competition ?? t.to_country_name}</span>
+              </span>
+            )}
           </div>
 
-          {fee && (
-            <p
-              className={`mt-2.5 leading-tight font-extrabold tracking-tight text-slate-50 tabular-nums ${
-                fee.length > 10 ? "text-base" : "text-[22px]"
-              }`}
-            >
-              {fee}
-            </p>
+          {amount && (
+            <div className="mt-2.5">
+              <p
+                className={`leading-tight font-extrabold tracking-tight text-slate-50 tabular-nums ${
+                  amount.value.length > 10 ? "text-base" : "text-[22px]"
+                }`}
+              >
+                {amount.value}
+              </p>
+              <p className="mt-0.5 font-mono text-[9px] font-bold tracking-[0.14em] text-slate-500 uppercase">
+                {amount.label}
+              </p>
+            </div>
           )}
         </div>
       </div>

@@ -1,7 +1,25 @@
-/** Code ISO 3166-1 alpha-2 -> emoji drapeau, par arithmétique regional-indicator. */
-export function flagEmoji(iso?: string | null): string {
-  if (!iso || iso.length !== 2) return "";
-  const cps = [...iso.toUpperCase()].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65);
+/**
+ * Code pays -> emoji drapeau.
+ *
+ * Deux formes, parce que le football ne se joue pas en pays ISO : « fr » passe
+ * par l'arithmétique regional-indicator classique, tandis que les nations
+ * britanniques — « gb-eng », « gb-sct », « gb-wls » — n'ont pas de code
+ * ISO 3166-1 et demandent une séquence de balises sur le drapeau noir.
+ * Sans ce second cas, la Premier League s'afficherait sous l'Union Jack, ou
+ * sans drapeau du tout.
+ */
+export function flagEmoji(code?: string | null): string {
+  if (!code) return "";
+  const value = code.toLowerCase();
+
+  const subdivision = /^([a-z]{2})-([a-z]{3})$/.exec(value);
+  if (subdivision) {
+    const tags = [...subdivision[1], ...subdivision[2]].map((c) => 0xe0000 + c.charCodeAt(0));
+    return String.fromCodePoint(0x1f3f4, ...tags, 0xe007f);
+  }
+
+  if (value.length !== 2) return "";
+  const cps = [...value.toUpperCase()].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65);
   if (cps.some((c) => c < 0x1f1e6 || c > 0x1f1ff)) return "";
   return String.fromCodePoint(...cps);
 }
@@ -134,12 +152,51 @@ export function parseFee(raw?: string | null): ParsedFee {
   if (LOAN.test(value)) return { transfer_fee: "Prêt", fee_value_eur: null };
   if (FREE.test(value)) return { transfer_fee: "Libre", fee_value_eur: 0 };
 
-  const match = AMOUNT.exec(value);
-  if (!match) return { transfer_fee: "—", fee_value_eur: null };
+  const euros = amountToEuros(value);
+  if (euros === null) return { transfer_fee: "—", fee_value_eur: null };
+
+  return { transfer_fee: formatFee(euros), fee_value_eur: euros };
+}
+
+/**
+ * Montant brut -> euros, sans interprétation.
+ *
+ * Extrait de `parseFee` pour servir aussi aux valeurs de marché, qui suivent la
+ * même grammaire (« €220.00m », « €800k ») mais pas la même sémantique : un
+ * prêt ou un transfert libre n'ont aucun sens pour une estimation, et les
+ * chercher ici ferait lire « Libre » sur un joueur qui vaut zéro.
+ */
+export function amountToEuros(raw: string): number | null {
+  const match = AMOUNT.exec(raw);
+  if (!match) return null;
 
   const amount = Number(match[1].replace(",", "."));
-  if (!Number.isFinite(amount)) return { transfer_fee: "—", fee_value_eur: null };
+  if (!Number.isFinite(amount)) return null;
 
-  const euros = Math.round(amount * (SCALE[match[2]?.toLowerCase() ?? ""] ?? 1));
-  return { transfer_fee: formatFee(euros), fee_value_eur: euros };
+  return Math.round(amount * (SCALE[match[2]?.toLowerCase() ?? ""] ?? 1));
+}
+
+export type ParsedMarketValue = {
+  /** Valeur estimée en euros. Jamais nulle ni négative — voir `parseMarketValue`. */
+  market_value_eur: number;
+  /** Libellé francisé à l'ingestion, affiché tel quel : « 220 M€ ». */
+  market_value_label: string;
+};
+
+/**
+ * Valeur de marché d'une fiche joueur.
+ *
+ * Renvoie `null` plutôt qu'un zéro quand la source n'estime pas le joueur :
+ * Transfermarkt écrit alors « - », et `formatFee(0)` rendrait « Libre », ce qui
+ * annoncerait un joueur en fin de contrat là où on ne sait simplement rien.
+ * La carte préfère ne rien afficher qu'afficher faux.
+ */
+export function parseMarketValue(raw?: string | null): ParsedMarketValue | null {
+  const value = (raw ?? "").replace(/\s+/g, " ").trim();
+  if (!value) return null;
+
+  const euros = amountToEuros(value);
+  if (euros === null || euros <= 0) return null;
+
+  return { market_value_eur: euros, market_value_label: formatFee(euros) };
 }

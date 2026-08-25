@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 
+import { parseMarketValue, type ParsedMarketValue } from "../format.ts";
 import type { RawTransferInput } from "../ingest.ts";
 
 /**
@@ -120,6 +121,10 @@ export function extractId(href: string | undefined, kind: "spieler" | "verein"):
  *   td3 club actuel                          td4 club intéressé
  *   td5 date de publication                  td6 probabilité de transfert
  *
+ * td4 est un tableau imbriqué à deux lignes : le club sur la première, son
+ * drapeau et son championnat sur la seconde. C'est la seule cellule qui situe
+ * la rumeur géographiquement.
+ *
  * Le parseur est volontairement tolérant : une ligne dont on ne peut tirer ni
  * joueur ni club acheteur est ignorée, sans interrompre les autres. Une page
  * remaniée doit dégrader la moisson, jamais la faire échouer.
@@ -154,6 +159,14 @@ export function parseRumours(html: string): RawTransferInput[] {
     const toClubId = extractId(toLink.attr("href"), "verein");
     if (!toClub) return;
 
+    // La cellule « club intéressé » ne contient pas qu'un club : sous son nom,
+    // une seconde ligne porte le drapeau et le championnat de destination. C'est
+    // de là que vient le filtre pays — le marché visé, et non la nationalité du
+    // joueur, qui ne dit rien de l'endroit où il pourrait signer.
+    const competitionLink = $(tds[4]).find('a[href*="/wettbewerb/"]').first();
+    const toCompetition = dedupeLabel(competitionLink.attr("title") ?? competitionLink.text());
+    const toCountry = dedupeLabel($(tds[4]).find("img.flaggenrahmen").first().attr("title") ?? "");
+
     // La cellule de probabilité contient aussi un lien vers le forum : on ne
     // garde que le texte propre du td.
     const probabilityText = $(tds[6]).clone().children().remove().end().text();
@@ -167,6 +180,7 @@ export function parseRumours(html: string): RawTransferInput[] {
 
     out.push({
       externalId,
+      tmPlayerId: playerId,
       playerName,
       playerPhoto,
       // La colonne drapeau donne un pays en toutes lettres (« Danemark »), pas un
@@ -177,7 +191,12 @@ export function parseRumours(html: string): RawTransferInput[] {
       fromClubLogo: fromLogo,
       toClub,
       toClubLogo: toLogo,
-      fee: null, // la page des rumeurs n'affiche pas de montant
+      toCountry: toCountry || null,
+      toCompetition: toCompetition || null,
+      // La page des rumeurs n'affiche aucun montant, et c'est logique : tant
+      // qu'il n'y a pas d'accord, il n'y a pas de prix. Le chiffre de la carte
+      // vient de la fiche joueur, résolu après l'ingestion — voir marketValue.ts.
+      fee: null,
       type: "RUMOUR",
       probability,
       statusLabel: statusFor(probability),
@@ -230,4 +249,39 @@ export function statusFor(probability: number | null): string {
 
 export async function fetchRumours(fetcher: HtmlFetcher = createHtmlFetcher()) {
   return parseRumours(await fetcher.get(RUMOURS_URL));
+}
+
+/**
+ * Fiche d'un joueur.
+ *
+ * Le segment de nom qui précède `/profil/` est décoratif : Transfermarkt
+ * redirige sur la bonne fiche à partir du seul identifiant. On envoie donc un
+ * `-` plutôt que de resluguer le nom, ce qui éviterait de toute façon mal les
+ * accents et la ponctuation.
+ */
+export const profileUrl = (playerId: string) =>
+  `https://www.transfermarkt.com/-/profil/spieler/${playerId}`;
+
+/**
+ * Valeur de marché d'une fiche joueur.
+ *
+ * L'en-tête de la fiche porte le montant dans un bloc dédié, suivi d'un
+ * paragraphe « Last update: 22/07/2026 ». Ce paragraphe est retiré avant
+ * lecture : sur un joueur non estimé, le bloc ne contient qu'un tiret, et la
+ * date resterait le seul nombre en vue — on lirait « 22 € ».
+ */
+export function parsePlayerMarketValue(html: string): ParsedMarketValue | null {
+  const $ = cheerio.load(html);
+  const wrapper = $(".data-header__market-value-wrapper").first();
+  if (wrapper.length === 0) return null;
+
+  const text = wrapper.clone().find("p").remove().end().text();
+  return parseMarketValue(text);
+}
+
+export async function fetchMarketValue(
+  playerId: string,
+  fetcher: HtmlFetcher = createHtmlFetcher(),
+): Promise<ParsedMarketValue | null> {
+  return parsePlayerMarketValue(await fetcher.get(profileUrl(playerId)));
 }
