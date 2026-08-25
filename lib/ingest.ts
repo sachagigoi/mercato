@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { resolveCountry } from "./countries.ts";
 import { normalizeName, parseFee } from "./format.ts";
 import type { TransferInsert, TransferType } from "./types.ts";
 
@@ -21,6 +22,8 @@ export const TRANSFER_TYPES = ["TRANSFER", "RUMOUR", "EXTENSION"] as const;
  */
 export const RawTransferSchema = z.object({
   externalId: z.string().min(1).max(200),
+  /** Identifiant source du joueur, clé de regroupement de la résolution des valeurs. */
+  tmPlayerId: z.string().max(20).nullish(),
   playerName: z.string().min(1).max(120),
   /** Visuels fournis par la source ; prioritaires sur le cache. */
   playerPhoto: z.string().url().max(500).nullish(),
@@ -29,6 +32,9 @@ export const RawTransferSchema = z.object({
   nationalityCode: z.string().length(2).nullish(),
   fromClub: z.string().max(120).nullish(),
   toClub: z.string().max(120).nullish(),
+  /** Pays du club acheteur, dans la langue de la source ; francisé par `normalize`. */
+  toCountry: z.string().max(60).nullish(),
+  toCompetition: z.string().max(80).nullish(),
   fee: z.string().max(120).nullish(),
   type: z.enum(TRANSFER_TYPES),
   probability: z.number().int().min(0).max(100).nullish(),
@@ -152,6 +158,7 @@ export function normalize(
   const { existing, media, now } = context;
   const fee = parseFee(raw.fee);
   const probability = raw.probability ?? null;
+  const country = resolveCountry(raw.toCountry);
 
   const player = media.get(mediaKey("player", raw.playerName));
   const fromClub = raw.fromClub ? media.get(mediaKey("club", raw.fromClub)) : undefined;
@@ -166,6 +173,7 @@ export function normalize(
 
   return {
     external_id: raw.externalId,
+    tm_player_id: raw.tmPlayerId ?? null,
     player_name: raw.playerName,
     // Le portrait de la source prime sur le cache : il est plus frais, et il
     // n'a rien coûté en quota. Le cache ne sert plus que de repli.
@@ -176,6 +184,9 @@ export function normalize(
     from_club_logo: raw.fromClubLogo ?? fromClub?.image_url ?? null,
     to_club_name: raw.toClub ?? null,
     to_club_logo: raw.toClubLogo ?? toClub?.image_url ?? null,
+    to_country_code: country?.code ?? null,
+    to_country_name: country?.name ?? null,
+    to_competition: raw.toCompetition ?? null,
     transfer_fee: fee.transfer_fee,
     fee_value_eur: fee.fee_value_eur,
     type: raw.type as TransferType,

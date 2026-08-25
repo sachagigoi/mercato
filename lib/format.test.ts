@@ -7,6 +7,7 @@ import {
   formatFee,
   normalizeName,
   parseFee,
+  parseMarketValue,
   probabilityTrend,
   relativeTime,
 } from "./format.ts";
@@ -86,10 +87,44 @@ describe("flagEmoji", () => {
     assert.equal(flagEmoji("BR"), "🇧🇷");
   });
 
+  it("rend les nations britanniques, qui n'ont pas de code ISO 3166-1", () => {
+    // Sans ce cas, la Premier League s'afficherait sous l'Union Jack ou sans
+    // rien : « England » n'est pas un pays au sens de la norme.
+    assert.equal(flagEmoji("gb-eng"), "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}");
+    assert.notEqual(flagEmoji("gb-sct"), flagEmoji("gb-wls"));
+    assert.equal(flagEmoji("GB-ENG"), flagEmoji("gb-eng"));
+  });
+
   it("renvoie vide sur une entrée qui n'est pas un code pays", () => {
     for (const bad of ["", "f", "fra", "12", null, undefined]) {
       assert.equal(flagEmoji(bad), "", JSON.stringify(bad));
     }
+  });
+});
+
+describe("parseMarketValue", () => {
+  it("lit les formats de valeur de la source", () => {
+    assert.deepEqual(parseMarketValue("€220.00m"), {
+      market_value_eur: 220_000_000,
+      market_value_label: "220 M€",
+    });
+    assert.deepEqual(parseMarketValue("€800k"), {
+      market_value_eur: 800_000,
+      market_value_label: "800 k€",
+    });
+  });
+
+  it("rend null plutôt que « Libre » sur un joueur non estimé", () => {
+    // parseFee traduit 0 € en « Libre », ce qui annoncerait une fin de contrat.
+    // Une valeur inconnue n'est pas une valeur nulle.
+    assert.equal(parseFee("free transfer").transfer_fee, "Libre");
+    for (const empty of ["-", "", "   ", null, undefined]) {
+      assert.equal(parseMarketValue(empty), null, JSON.stringify(empty));
+    }
+  });
+
+  it("ne reprend pas la grammaire des prêts, qui n'a pas de sens pour une estimation", () => {
+    assert.deepEqual(parseMarketValue("loan"), null);
   });
 });
 

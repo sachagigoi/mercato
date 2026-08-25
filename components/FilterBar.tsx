@@ -1,6 +1,7 @@
 "use client";
 
-import { FILTERS, type FilterKey } from "@/lib/filters";
+import { FILTERS, type CountryOption, type FilterKey } from "@/lib/filters";
+import { flagEmoji } from "@/lib/format";
 
 export type ConnectionStatus = "connecting" | "live" | "polling";
 
@@ -20,13 +21,19 @@ const STATUS: Record<ConnectionStatus, { label: string; dot: string; text: strin
 export function FilterBar({
   active,
   counts,
+  countries,
+  activeCountry,
   status,
   onChange,
+  onCountryChange,
 }: {
   active: FilterKey;
   counts: Record<FilterKey, number>;
+  countries: readonly CountryOption[];
+  activeCountry: string;
   status: ConnectionStatus;
   onChange: (key: FilterKey) => void;
+  onCountryChange: (key: string) => void;
 }) {
   const s = STATUS[status];
 
@@ -78,6 +85,52 @@ export function FilterBar({
           {s.label}
         </span>
       </div>
+
+      {/*
+        Seconde rangée, volontairement plus discrète que la première : le type
+        d'info est la coupe principale, le pays une précision. Deux rangées de
+        même poids se disputeraient le regard et donneraient une barre qui pèse
+        plus lourd que le feed qu'elle filtre.
+
+        Elle disparaît quand il n'y a qu'un seul pays à proposer — une puce
+        « Tous les pays » seule ne filtre rien et ne ferait que voler de la
+        hauteur à une barre déjà collante.
+      */}
+      {countries.length > 1 && (
+        <div className="flex items-center gap-1 overflow-x-auto border-t border-slate-800/60 py-1.5">
+          {countries.map((c) => {
+            const isActive = c.key === activeCountry;
+            const flag = flagEmoji(c.code);
+            return (
+              <button
+                key={c.key}
+                type="button"
+                onClick={() => onCountryChange(c.key)}
+                aria-pressed={isActive}
+                className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500 ${
+                  isActive
+                    ? "border-slate-600 bg-slate-800 text-slate-100"
+                    : "border-transparent text-slate-500 hover:bg-slate-900 hover:text-slate-300"
+                }`}
+              >
+                {flag && (
+                  <span className="mr-1" aria-hidden>
+                    {flag}
+                  </span>
+                )}
+                {c.label}
+                <span
+                  className={`ml-1.5 font-mono tabular-nums ${
+                    isActive ? "text-amber-400" : "text-slate-600"
+                  }`}
+                >
+                  {c.count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

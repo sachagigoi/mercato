@@ -118,9 +118,18 @@ create table public.transfers (
   to_club_name        text,
   to_club_logo        text,
 
+  -- Clubs (suite) : le marché visé
+  to_country_code     text,              -- 'pl', ou 'gb-eng' pour les nations britanniques
+  to_country_name     text,              -- francisé à l'ingestion : 'Pologne'
+  to_competition      text,              -- 'Ekstraklasa', tel que nommé par la source
+
   -- Deal
   transfer_fee        text,              -- libellé d'affichage : '45 M€', 'Prêt', 'Libre'
   fee_value_eur       bigint,            -- valeur numérique ou null ; tri et filtres
+  market_value_eur    bigint,            -- estimation, PAS un prix convenu
+  market_value_label  text,              -- '220 M€', francisé à l'ingestion
+  market_value_fetched_at timestamptz,   -- null = jamais lue ; file d'attente et péremption
+  tm_player_id        text,              -- clé de regroupement de la résolution des valeurs
   type                public.transfer_type not null,
   probability_score   smallint check (probability_score between 0 and 100),
   previous_probability smallint check (previous_probability between 0 and 100),
@@ -149,6 +158,9 @@ create table public.transfers (
 | `is_published` | Interrupteur de modération. Avec de la donnée scrapée, il faut pouvoir masquer une ligne sans la supprimer. |
 | `nationality_code` | ISO plutôt qu'emoji : l'emoji se dérive côté client (arithmétique regional-indicator, §4.4). Permet de passer à des drapeaux SVG plus tard sans toucher à la base. |
 | `source_url` | Traçabilité. Une carte non cliquable vers sa source n'est pas crédible sur un produit d'actu. |
+| `market_value_*` | La page des rumeurs n'affiche **aucun** montant, et c'est logique : sans accord, il n'y a pas de prix. Le seul chiffre honnête est la valeur de marché du joueur, lue sur sa fiche. Elle est stockée à part de `transfer_fee` parce qu'une estimation et un prix convenu ne disent pas la même chose — les confondre ferait lire « 45 M€ » comme un transfert bouclé. La carte annonce lequel des deux elle montre. |
+| `tm_player_id` | La valeur appartient au joueur, pas à la rumeur. Regrouper dessus fait qu'un joueur cité dans trois rumeurs ne coûte qu'une requête, et que la valeur arrive d'un coup sur les trois cartes. |
+| `to_country_*`, `to_competition` | Le filtre pays (§4.6). Un feed mondial de rumeurs noie ce qu'on cherche, et le pays du club **acheteur** est la coupe la plus naturelle — on suit un championnat avant de suivre une catégorie. C'est bien la destination et non la nationalité du joueur : ce qu'on veut savoir, c'est où la rumeur pourrait aboutir. |
 | `player_cutout` | Séparée de `player_photo` plutôt que de l'écraser. Le détourage est asynchrone et faillible : garder la source intacte permet de retomber dessus, et de rejouer le worker après un changement de modèle sans avoir rien perdu. |
 
 ### 2.3 Index
@@ -160,7 +172,11 @@ create index transfers_hot_idx      on public.transfers (probability_score desc)
   where is_published and type = 'RUMOUR';
 ```
 
-Les trois index couvrent exactement les quatre filtres de la barre. Index partiels : `is_published`
+`transfers_country_idx (to_country_code, published_at desc) where is_published` s'ajoute pour la
+seconde rangée de filtres, et `transfers_market_value_queue_idx (market_value_fetched_at nulls
+first) where tm_player_id is not null` sert de file d'attente à la résolution des valeurs.
+
+Les trois premiers index couvrent exactement les quatre filtres de type de la barre. Index partiels : `is_published`
 étant vrai dans ~99 % des cas, ils restent petits.
 
 ### 2.4 `updated_at` automatique
@@ -267,16 +283,22 @@ lib/
   supabase/admin.ts             # service_role — import 'server-only' obligatoire
   ingest.ts                     # validation, dédoublonnage, normalisation, upsert
   ingest.test.ts                # 14 tests, dont les 3 exécutions sans doublon
-  format.test.ts                # 15 tests, dont le parseur de montants
+  format.test.ts                # 19 tests, dont les parseurs de montants et de valeurs
   supabase/store.ts             # implémentation Supabase des dépôts d'ingestion
   sources/fixtures.ts           # source de démonstration (Phase 3)
-  sources/transfermarkt.ts      # scraper rumeurs (Phase 4)
+  sources/transfermarkt.ts      # scraper rumeurs + fiche joueur (valeur de marché)
+  sources/transfermarkt.test.ts # 16 tests contre deux pages réelles enregistrées
   sources/apifootball.ts        # résolution visuels + cache + budget
   format.ts                     # parsing montants, emoji drapeau, temps relatif
   accent.ts                     # accentOf() + map de classes littérales
   feed.ts                       # mergeRows(), maxCreatedAt() — logique pure
   feed.test.ts                  # 13 tests node:test sur la fusion et les filtres
-  filters.ts                    # définition des 4 filtres, seuil « chaud »
+  filters.ts                    # filtres de type et de pays, seuil « chaud »
+  filters.test.ts               # 12 tests sur la composition des deux axes
+  countries.ts                  # nom de pays source -> { code drapeau, nom français }
+  countries.test.ts             # 8 tests, dont les nations sans code ISO
+  market-value.ts               # résolution des valeurs, une fiche par joueur
+  market-value.test.ts          # 7 tests, dont l'arrêt après trois échecs
   fixtures.ts                   # jeu de cas limites du banc de rendu
   types.ts                      # types générés depuis Supabase
 public/demo/                    # gabarits de portrait (Phase 1)
@@ -356,14 +378,22 @@ ambre. La température du feed se lit d'un coup d'œil, sans lire un mot.
 > (`bg-${accent}-400` est purgé au build). On utilise une **map statique** `accent → classes
 > littérales`, dans un seul fichier.
 
-### 4.4 Drapeau depuis le code ISO
+### 4.4 Drapeau depuis le code pays
+
+Deux formes, parce que le football ne se joue pas en pays ISO. Un code alpha-2 passe par
+l'arithmétique regional-indicator ; les nations britanniques — `gb-eng`, `gb-sct`, `gb-wls` — n'ont
+pas de code ISO 3166-1 et demandent une séquence de balises sur le drapeau noir. Sans ce second cas,
+la Premier League s'afficherait sous l'Union Jack, ou sans drapeau du tout.
 
 ```ts
-export const flagEmoji = (iso?: string | null) =>
-  iso?.length === 2
-    ? String.fromCodePoint(...[...iso.toUpperCase()].map(c => 0x1f1e6 + c.charCodeAt(0) - 65))
-    : '';
+flagEmoji('fr')      // 🇫🇷
+flagEmoji('gb-eng')  // drapeau anglais, via U+1F3F4 + balises + U+E007F
+flagEmoji('fra')     // '' — ni l'un ni l'autre
 ```
+
+La correspondance nom de pays -> `{ code, nom français }` vit dans `lib/countries.ts` et s'applique
+**à l'ingestion**, jamais au rendu : même règle que `parseFee`. Un pays absent de la table garde son
+nom source et perd seulement son drapeau — la puce de filtre reste lisible au lieu de disparaître.
 
 ### 4.5 `MercatoCard` — anatomie
 
@@ -372,8 +402,9 @@ export const flagEmoji = (iso?: string | null) =>
 │  [logo]  OM   ──────➔──────   PSG  [logo]        │  header, h-16, séparateur bas
 ├──────────────────────────────────────────────────┤
 │   ╭────╮   RAYAN CHERKI  🇫🇷                      │  body
-│   │tête│   ● Piste chaude                        │  badge = accentOf()
+│   │tête│   ● Piste chaude   🇫🇷 Ligue 1           │  badge = accentOf() + marché visé
 │   ╰────╯   45 M€                                 │  text-2xl font-bold tabular-nums
+│            VALEUR ESTIMÉE                        │  ce que le chiffre est vraiment
 │                                                  │
 │   ▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░  78%  ↑12                   │  jauge néon + tendance
 ├──────────────────────────────────────────────────┤
@@ -398,6 +429,14 @@ Détails d'implémentation :
   Barre `h-1.5 rounded-full bg-slate-800`, remplissage en dégradé + `shadow-[0_0_10px_-1px]` en
   couleur d'accent, `transition-[width] duration-700 ease-out`.
 - **Tendance** : `probability_score - previous_probability`, affichée si |delta| ≥ 3.
+- **Montant** : deux chiffres possibles, qui ne disent pas la même chose. Un prix convenu
+  (`transfer_fee`) est un fait ; une valeur de marché (`market_value_label`) est une estimation. Le
+  prix l'emporte quand il existe, et **dans les deux cas la carte dit lequel elle montre** —
+  « 45 M€ » posé nu sur une rumeur laisserait croire à un accord trouvé. Rien n'est affiché quand on
+  n'a ni l'un ni l'autre : un tiret en gros gras ressemble à un bug, pas à une absence.
+- **Marché visé** : `to_competition` avec le drapeau de `to_country_code`, à côté du badge de
+  statut plutôt qu'en pied de carte — c'est la même nature d'information, de quoi situer la rumeur
+  d'un coup d'œil, et c'est ce que la seconde rangée de filtres découpe.
 - **Accessibilité** : la carte entière est un `<a>` vers `source_url` si présent. Jauge en
   `role="progressbar"` avec `aria-valuenow`. Contrastes ≥ 4.5:1 sur le fond `#0B0F17`.
 
@@ -416,10 +455,33 @@ Barre de filtres, quatre onglets, l'actif porte un `layoutId`-like underline en 
 | Rumeurs chaudes | `type === 'RUMOUR' && (probability_score ?? 0) >= 70` |
 | Prolongations | `type === 'EXTENSION'` |
 
-Chaque onglet affiche son compteur. Le filtre actif est reflété dans l'URL (`?f=hot`) via
-`useSearchParams` + `history.replaceState` : un feed filtré doit être partageable.
+Une **seconde rangée** filtre par pays du club acheteur. Elle est volontairement plus discrète :
+le type d'info est la coupe principale, le pays une précision, et deux rangées de même poids
+donneraient une barre collante qui pèse plus lourd que le feed qu'elle filtre. Elle disparaît quand
+il n'y a qu'un seul pays à proposer.
 
-État vide par filtre (« Aucune rumeur chaude pour l'instant ») — jamais une grille blanche.
+Les puces ne viennent pas d'une nomenclature figée mais des lignes chargées, les plus fournies
+d'abord. Deux jeux les alimentent, et c'est le point délicat :
+
+| | Source | Pourquoi |
+|---|---|---|
+| **Quelles puces existent** | le feed entier | Les dériver du type sélectionné faisait disparaître la puce active au premier changement d'onglet, emportant la sélection avec elle. Une rangée qui se réorganise sous le doigt de qui l'utilise n'est pas un filtre. |
+| **Leurs compteurs** | le type sélectionné | Le nombre affiché doit être exactement ce que le clic va montrer. |
+
+Les deux axes se comptent donc l'un dans l'autre : les types sur le pays choisi, les pays sur le
+type choisi. Une puce à zéro est masquée — sauf la puce active, qui reste visible pour qu'on puisse
+la désélectionner et pour que l'état vide sache de quel pays il parle.
+
+Les lignes que la source ne situe pas ne créent aucune puce : elles restent visibles sous « Tous
+les pays », ce qui est exactement ce que la puce annonce.
+
+Chaque onglet affiche son compteur. Les deux filtres actifs sont reflétés dans l'URL (`?f=hot&p=fr`)
+via `history.replaceState` : « les rumeurs chaudes en Ligue 1 » est justement le genre de lien qu'on
+envoie à quelqu'un.
+
+État vide par filtre (« Aucune rumeur chaude pour l'instant »), et nommant le pays dès qu'un pays
+est choisi — « Aucune rumeur chaude » laisserait croire que le feed entier est froid alors que
+seule l'Espagne l'est. Jamais une grille blanche.
 
 ### 4.7 Tokens de design (`globals.css`, Tailwind v4)
 
@@ -467,10 +529,13 @@ de passage **unique** vers la base : aucun autre fichier n'écrit dans `transfer
 // Donnée brute, quelle que soit la source.
 export interface RawTransferInput {
   externalId: string;
+  tmPlayerId?: string;          // clé de regroupement de la résolution des valeurs
   playerName: string;
   nationalityCode?: string;
   fromClub?: string;
   toClub?: string;
+  toCountry?: string;           // langue de la source : 'Poland' ; francisé par normalize()
+  toCompetition?: string;       // 'Ekstraklasa'
   fee?: string;                 // texte brut : '€45.00m', 'loan transfer', 'free'
   type: TransferType;
   probability?: number;
@@ -508,6 +573,22 @@ export function ingest(rows: RawTransferInput[]): Promise<IngestReport>;
 4 bis. **Stabilité de `published_at`** — la date n'est prise de la source que si elle en fournit
    une ; sinon on reprend celle déjà en base. Sans cette règle, chaque passage du cron repousserait
    toutes les rumeurs en tête du feed et le tri chronologique perdrait tout son sens.
+
+5. **Résolution des valeurs de marché** — hors ingestion proprement dite, en fin de route cron.
+   La file est faite de **joueurs**, pas de lignes : `select distinct tm_player_id` sur les valeurs
+   manquantes ou vieilles de plus de sept jours. Un joueur cité dans trois rumeurs ne coûte donc
+   qu'une requête, et la valeur arrive d'un coup sur les trois cartes — par Realtime, comme les
+   portraits détourés.
+
+   Le lot est petit et espacé (dix fiches, 1,2 s entre chacune) : ce n'est pas un quota qui
+   contraint, Transfermarkt n'en impose pas, mais la correction. Une fiche injoignable n'est **pas**
+   horodatée — un incident réseau n'est pas un joueur sans valeur, et la condamner à sept jours de
+   silence pour une coupure de dix secondes serait disproportionné. Trois échecs d'affilée arrêtent
+   le lot : ce n'est plus un joueur en cause mais la source, et continuer brûlerait les soixante
+   secondes de la route.
+
+   Placée en dernier volontairement : un incident sur les fiches ne doit jamais priver le feed de
+   ses rumeurs, seulement de ses montants.
 
 4 ter. **Dédoublonnage intra-lot** — une page source liste régulièrement deux fois la même rumeur
    (bloc « top », puis bloc « récentes »). Envoyer les deux dans un seul `INSERT` fait échouer
@@ -871,7 +952,7 @@ Sans cela, `/preview` reste le moyen de travailler le design, puisqu'il ne dépe
 | Scraper Transfermarkt | 15 rumeurs/passage, ~10 probabilités, portraits **et** écussons |
 | Ingestion idempotente | 3 exécutions → 0 doublon, vérifié sur données réelles |
 | Worker de détourage | Tourne sur GitHub Actions, run manuel en succès |
-| Tests | 58 `node:test`, `npm test` |
+| Tests | 105 `node:test`, `npm test` |
 | Déploiement Vercel | En production, variables posées, ingestion rejouée en ligne sans doublon |
 
 **API-Football n'est plus nécessaire.** Le compte est bloqué définitivement, mais
