@@ -52,9 +52,15 @@ async function run(request: Request) {
 }
 
 /**
- * Sans `API_FOOTBALL_KEY`, l'ingestion reste pleinement fonctionnelle — les
- * cartes sortent simplement sans visuels, et le repli initiales du §4.5 prend
- * le relais. Une clé manquante ne doit pas faire échouer la moisson.
+ * Complément facultatif, plus la source principale.
+ *
+ * Transfermarkt fournit désormais portraits ET écussons directement dans la
+ * page des rumeurs, sans clé ni quota. API-Football ne sert plus qu'à combler
+ * les rares clubs dont la page ne donnerait pas d'écusson.
+ *
+ * Sans `API_FOOTBALL_KEY`, l'ingestion est donc pleinement fonctionnelle et les
+ * cartes ont leurs visuels. Une clé absente ou révoquée ne doit jamais faire
+ * échouer la moisson.
  */
 async function resolveMediaIfConfigured() {
   const apiKey = process.env.API_FOOTBALL_KEY;

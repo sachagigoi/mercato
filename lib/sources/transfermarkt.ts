@@ -9,7 +9,7 @@ import type { RawTransferInput } from "../ingest.ts";
  * depuis l'environnement d'exécution, et surtout la locale ne coûte presque
  * rien ici — les libellés de statut sont dérivés de la probabilité par
  * `statusFor()`, pas lus dans la page. Reste les noms de clubs, que la version
- * anglaise rend d'ailleurs plus proches de ceux d'API-Football
+ * anglaise rend d'ailleurs plus proches de leur forme internationale
  * (« Eintracht Frankfurt » plutôt que « Eintracht Francfort »).
  */
 export const RUMOURS_URL = "https://www.transfermarkt.com/statistik/aktuellegeruechte";
@@ -78,14 +78,31 @@ export function parsePublishedAt(value: string): Date | null {
  * Le même identifiant en `/portrait/big/` rend du 300 × 390 px, cadré
  * tête-épaules sur fond flou : le point de départ idéal pour le détourage.
  *
- * Conséquence : les portraits ne coûtent plus rien au quota API-Football, qui
- * n'a plus à résoudre que les écussons de clubs.
+ * Conséquence : les portraits ne coûtent rien en quota, et arrivent avec la
+ * page. Voir aussi crestUrl() pour les écussons.
  */
 export function portraitUrl(raw: string | undefined): string | null {
   if (!raw) return null;
   const url = raw.split("?")[0];
   if (!/img\.a\.transfermarkt\.technology\/portrait\//.test(url)) return null;
   return url.replace("/portrait/medium/", "/portrait/big/");
+}
+
+/**
+ * Écusson du club, en grand format.
+ *
+ * La page sert les écussons en `tiny` (15 px) et `verysmall` (20 px), illisibles
+ * dès qu'un écran est en haute densité. Le même identifiant en `/wappen/big/`
+ * rend du 180 × 180 carré, confortable pour la vignette de 30 px de la carte.
+ *
+ * C'est ce qui rend API-Football inutile au MVP : Transfermarkt fournit à la
+ * fois les portraits et les écussons, sans quota ni clé.
+ */
+export function crestUrl(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const url = raw.split("?")[0];
+  const match = /img\.a\.transfermarkt\.technology\/wappen\/[^/]+\/(\d+)\.png$/.exec(url);
+  return match ? `https://img.a.transfermarkt.technology/wappen/big/${match[1]}.png` : null;
 }
 
 /** Extrait l'identifiant Transfermarkt d'une URL de profil ou de club. */
@@ -130,6 +147,8 @@ export function parseRumours(html: string): RawTransferInput[] {
 
     const fromLink = $(tds[3]).find("a").first();
     const toLink = $(tds[4]).find("a").first();
+    const fromLogo = crestUrl($(tds[3]).find("img").first().attr("src"));
+    const toLogo = crestUrl($(tds[4]).find("img").first().attr("src"));
     const fromClub = frenchClub(dedupeLabel(fromLink.attr("title") ?? ""));
     const toClub = frenchClub(dedupeLabel(toLink.attr("title") ?? ""));
     const toClubId = extractId(toLink.attr("href"), "verein");
@@ -155,7 +174,9 @@ export function parseRumours(html: string): RawTransferInput[] {
       // à faire quand le drapeau sur la carte le justifiera, pas avant.
       nationalityCode: null,
       fromClub: fromClub || null,
+      fromClubLogo: fromLogo,
       toClub,
+      toClubLogo: toLogo,
       fee: null, // la page des rumeurs n'affiche pas de montant
       type: "RUMOUR",
       probability,

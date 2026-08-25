@@ -22,8 +22,10 @@ export const TRANSFER_TYPES = ["TRANSFER", "RUMOUR", "EXTENSION"] as const;
 export const RawTransferSchema = z.object({
   externalId: z.string().min(1).max(200),
   playerName: z.string().min(1).max(120),
-  /** Portrait fourni par la source ; prioritaire sur le cache de visuels. */
+  /** Visuels fournis par la source ; prioritaires sur le cache. */
   playerPhoto: z.string().url().max(500).nullish(),
+  fromClubLogo: z.string().url().max(500).nullish(),
+  toClubLogo: z.string().url().max(500).nullish(),
   nationalityCode: z.string().length(2).nullish(),
   fromClub: z.string().max(120).nullish(),
   toClub: z.string().max(120).nullish(),
@@ -171,9 +173,9 @@ export function normalize(
     player_cutout: player?.cutout_url ?? null,
     nationality_code: raw.nationalityCode?.toLowerCase() ?? null,
     from_club_name: raw.fromClub ?? null,
-    from_club_logo: fromClub?.image_url ?? null,
+    from_club_logo: raw.fromClubLogo ?? fromClub?.image_url ?? null,
     to_club_name: raw.toClub ?? null,
-    to_club_logo: toClub?.image_url ?? null,
+    to_club_logo: raw.toClubLogo ?? toClub?.image_url ?? null,
     transfer_fee: fee.transfer_fee,
     fee_value_eur: fee.fee_value_eur,
     type: raw.type as TransferType,
@@ -227,8 +229,8 @@ export async function ingest(
   const keys: MediaKey[] = [];
   for (const row of rows) {
     keys.push({ kind: "player", name: row.playerName, imageUrl: row.playerPhoto ?? null });
-    if (row.fromClub) keys.push({ kind: "club", name: row.fromClub });
-    if (row.toClub) keys.push({ kind: "club", name: row.toClub });
+    if (row.fromClub) keys.push({ kind: "club", name: row.fromClub, imageUrl: row.fromClubLogo ?? null });
+    if (row.toClub) keys.push({ kind: "club", name: row.toClub, imageUrl: row.toClubLogo ?? null });
   }
   const media = await stores.media.lookup(keys);
 
