@@ -3,9 +3,9 @@
 > Feed temps réel de transferts et rumeurs football. Next.js 16 (App Router) · Supabase · Tailwind v4.
 > Document de référence unique pour le MVP.
 
-**État : les 6 phases sont livrées, le projet Vercel est créé et le premier build
-de production est passé. Restent les variables d'environnement, les deux secrets
-GitHub et la validation du Realtime.**
+**État : les 6 phases sont livrées et le produit est en ligne sur
+<https://mercato-two-zeta.vercel.app>, ingestion comprise. Restent les deux
+secrets GitHub du workflow et la validation du Realtime.**
 
 > **Reprise de session — à lire en premier.** Tout est poussé sur
 > `claude/mercato-webapp-mvp-agsll7` — branche par défaut du dépôt, et branche
@@ -872,7 +872,7 @@ Sans cela, `/preview` reste le moyen de travailler le design, puisqu'il ne dépe
 | Ingestion idempotente | 3 exécutions → 0 doublon, vérifié sur données réelles |
 | Worker de détourage | Tourne sur GitHub Actions, run manuel en succès |
 | Tests | 58 `node:test`, `npm test` |
-| Projet Vercel `mercato` | Créé, lié au dépôt, premier build de production en succès |
+| Déploiement Vercel | En production, variables posées, ingestion rejouée en ligne sans doublon |
 
 **API-Football n'est plus nécessaire.** Le compte est bloqué définitivement, mais
 Transfermarkt fournit portraits et écussons sans clé ni quota. La route dégrade
@@ -885,50 +885,55 @@ proprement quand `API_FOOTBALL_KEY` est absente — ne pas la remettre.
 | Projet | `mercato` — `prj_2myZ0SpERcnHdGAARcQcaEwWdUJw`, équipe `sachagigois-projects`, plan Hobby |
 | Dépôt lié | `sachagigoi/mercato`, branche de production `claude/mercato-webapp-mvp-agsll7` |
 | Production | <https://mercato-two-zeta.vercel.app> |
+| Variables | Les quatre posées, sur les trois environnements |
 | Protection | Vercel Authentication désactivée — la route cron doit rester joignable depuis GitHub Actions |
-| Build | `next build` en succès sur Vercel, 26 s, **sans aucune variable posée** |
+| Région des fonctions | `iad1` (Washington), à rapprocher de la base — voir plus bas |
 
 Tout `push` sur la branche de production redéploie en production ; un `push` sur
-une autre branche produit un déploiement de prévisualisation.
+une autre branche produit un déploiement de prévisualisation. Les outils MCP
+Vercel, eux, ne savent créer que des previews : reconstruire la production
+demande un commit sur la branche de production, ou une promotion manuelle
+depuis le dashboard.
 
-Le build passe sans variables parce que la page du feed est en
-`dynamic = "force-dynamic"` (§4) : rien n'est rendu à la compilation, donc rien
-ne lit Supabase à ce moment-là. En ligne, le site répond bien en 200 et affiche
-« Le feed n'a pas pu être chargé » tant que les variables manquent — la
-dégradation prévue, pas une page d'erreur Vercel.
+Les deux `NEXT_PUBLIC_` sont **figées dans le bundle au moment du build**. Les
+poser ne suffit pas : sans redéploiement, le navigateur continue de recevoir un
+bundle compilé sans clé, et le Realtime avec. C'est toute la différence entre le
+premier déploiement — bâti à vide, feed en erreur — et celui qui sert
+aujourd'hui.
+
+### Ce qui a été vérifié en production
+
+| Vérification | Résultat |
+|---|---|
+| Feed | 200, cartes rendues côté serveur, aucun bandeau d'erreur |
+| Bundle client | URL Supabase et clé publishable bien inlinées ; **aucune trace de `service_role`** dans les huit chunks — le garde-fou `server-only` tient |
+| Route cron | 401 sans jeton, 200 avec — `CRON_SECRET` est bien en place |
+| Ingestion, 1er passage | 15 scannées, 12 insérées, 3 mises à jour, 0 écartée, 0 erreur |
+| Ingestion, 2e passage | 15 scannées, **0 insérée**, 15 mises à jour — idempotence tenue en ligne |
+| Doublons | 87 lignes, 87 `external_id` distincts |
+| API-Football | `media: { skipped: "API_FOOTBALL_KEY absente" }` — la dégradation prévue, sans échec |
+
+La moisson tourne donc depuis Vercel : `transfermarkt.com` est joignable depuis
+les fonctions, sans le `NODE_USE_ENV_PROXY` nécessaire en session web.
 
 ### Ce qu'il reste à faire
 
-**1. Poser les variables d'environnement.** Les outils MCP Vercel n'exposent
-aucune commande de gestion des variables — ni la CLI, absente de la session.
-C'est donc une manipulation manuelle, dans *Settings > Environment Variables*,
-sur les trois environnements (Production, Preview, Development) :
-
-```
-NEXT_PUBLIC_SUPABASE_URL       https://jfqtgphbpogfvofgtnax.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY  sb_publishable_52_4InDp2lIYj1xVJSGMrQ_If4zg-Z7
-SUPABASE_SERVICE_ROLE_KEY      (Supabase > Project Settings > API Keys > service_role)
-CRON_SECRET                    (aléatoire, 32 octets, à répliquer côté GitHub)
-```
-
-Les deux `NEXT_PUBLIC_` sont **figées dans le bundle au moment du build**.
-Les poser ne suffit pas : il faut redéployer derrière, sinon le navigateur
-continue de recevoir un bundle compilé sans clé, et le Realtime avec.
-
-**2. Deux secrets GitHub après le déploiement**, pour le workflow d'ingestion :
+**1. Deux secrets GitHub**, pour le workflow d'ingestion :
 `MERCATO_URL` = `https://mercato-two-zeta.vercel.app` et `CRON_SECRET`
-(identique à celui de Vercel). Les secrets du worker de détourage
-(`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`) sont déjà en place et éprouvés.
+(identique à celui de Vercel). Sans eux le workflow sort en code 2 avant tout
+appel. Les secrets du worker de détourage (`SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`) sont déjà en place et éprouvés.
 
-**3. Vérifier le Realtime.** C'est le seul morceau du MVP **jamais validé en
+**2. Vérifier le Realtime.** C'est le seul morceau du MVP **jamais validé en
 conditions réelles** : la WebSocket ne s'établit pas depuis une session Claude
-Code web, et le repli polling 60 s prend le relais en masquant le problème.
-Une fois en ligne, ouvrir le feed et confirmer que l'indicateur de la barre de
-filtres affiche **« En direct »** et non « Différé 60 s », puis faire un
-`update` de `probability_score` en SQL et vérifier que la jauge bouge sans
-rechargement.
+Code web, et le repli polling 60 s prend le relais en masquant le problème. Le
+HTML servi ne tranche pas davantage — l'indicateur part de « Connexion » et ne
+bascule qu'une fois le canal souscrit, donc dans un vrai navigateur.
+Ouvrir le feed, confirmer que l'indicateur de la barre de filtres affiche
+**« En direct »** et non « Différé 60 s », puis faire un `update` de
+`probability_score` en SQL et vérifier que la jauge bouge sans rechargement.
 
-**4. Rapprocher les fonctions de la base.** Le projet a été créé en `iad1`
+**3. Rapprocher les fonctions de la base.** Le projet a été créé en `iad1`
 (Washington) alors que la base est en `eu-west-3` (Paris) : chaque rendu
 serveur du feed traverse l'Atlantique deux fois. *Settings > Functions >
 Function Region* → `cdg1`. Le plan Hobby autorise une région, changeable
