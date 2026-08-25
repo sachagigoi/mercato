@@ -54,54 +54,83 @@ class FakeHttp implements ApiFootballHttp {
 
 const item = (over: Partial<PendingMedia> & { kind: PendingMedia["kind"] }): PendingMedia => ({
   name_normalized: "defaut",
-  display_name: "Défaut",
   ...over,
 });
+
+/** Neutralise l'étalement anti-rate-limit : les tests ne doivent rien attendre. */
+const noSleep = async () => {};
 
 describe("resolveMedia", () => {
   it("résout un club trouvé et journalise un joueur introuvable", async () => {
     const queue = new FakeQueue([
-      item({ kind: "club", name_normalized: "psg", display_name: "Paris Saint-Germain" }),
-      item({ kind: "player", name_normalized: "joueur inconnu", display_name: "Joueur Inconnu" }),
+      item({ kind: "club", name_normalized: "paris saint germain" }),
+      item({ kind: "player", name_normalized: "joueur inconnu" }),
     ]);
     const http = new FakeHttp(
       new Map([
         [
-          "/teams?search=Paris%20Saint-Germain",
+          "/teams?search=paris%20saint%20germain",
           { response: [{ team: { id: 85, logo: "https://cdn/psg.png" } }] },
         ],
-        ["/players/profiles?search=Joueur%20Inconnu", { response: [] }],
+        ["/players/profiles?search=joueur%20inconnu", { response: [] }],
       ]),
     );
 
-    const report = await resolveMedia({ queue, budget: new FakeBudget(80), http });
+    const report = await resolveMedia({ queue, budget: new FakeBudget(80), http, sleep: noSleep });
 
     assert.deepEqual(report, { attempted: 2, resolved: 1, missed: 1, budgetExhausted: false });
-    assert.deepEqual(queue.resolved, [{ kind: "club", name: "psg", hit: { af_id: 85, image_url: "https://cdn/psg.png" } }]);
+    assert.deepEqual(queue.resolved, [
+      { kind: "club", name: "paris saint germain", hit: { af_id: 85, image_url: "https://cdn/psg.png" } },
+    ]);
     assert.deepEqual(queue.missed, [{ kind: "player", name: "joueur inconnu" }]);
   });
 
-  it("interroge avec le nom d'affichage, jamais le nom normalisé", async () => {
-    const queue = new FakeQueue([
-      item({ kind: "club", name_normalized: "atletico madrid", display_name: "Atlético Madrid" }),
-    ]);
+  it("interroge avec le nom normalisé, seule forme qu'API-Football accepte", async () => {
+    // Contrainte vérifiée contre le vrai service : « Atlético Madrid » est
+    // rejeté (`may only contain alpha-numeric characters and spaces`), là où
+    // « atletico madrid » renvoie bien le club. Ni accent, ni tiret, ni casse.
+    const queue = new FakeQueue([item({ kind: "club", name_normalized: "atletico madrid" })]);
     const http = new FakeHttp(new Map());
 
-    await resolveMedia({ queue, budget: new FakeBudget(80), http });
+    await resolveMedia({ queue, budget: new FakeBudget(80), http, sleep: noSleep });
 
-    assert.deepEqual(http.calls, ["/teams?search=Atl%C3%A9tico%20Madrid"]);
+    assert.deepEqual(http.calls, ["/teams?search=atletico%20madrid"]);
+    const [call] = http.calls;
+    assert.ok(!/%C3|%E9|-/.test(call), "aucun accent ni tiret ne doit atteindre l'API");
+  });
+
+  it("étale les appels pour respecter la limite de 10 requêtes par minute", async () => {
+    const queue = new FakeQueue([
+      item({ kind: "club", name_normalized: "a" }),
+      item({ kind: "club", name_normalized: "b" }),
+      item({ kind: "club", name_normalized: "c" }),
+    ]);
+    const waits: number[] = [];
+
+    await resolveMedia(
+      {
+        queue,
+        budget: new FakeBudget(80),
+        http: new FakeHttp(new Map()),
+        sleep: async (ms) => void waits.push(ms),
+      },
+      { spacingMs: 6_500 },
+    );
+
+    // Une attente entre chaque appel, aucune avant le premier.
+    assert.deepEqual(waits, [6_500, 6_500]);
   });
 
   it("s'arrête net dès que le budget est épuisé, sans consommer les suivants", async () => {
     const queue = new FakeQueue([
-      item({ kind: "club", name_normalized: "a", display_name: "A" }),
-      item({ kind: "club", name_normalized: "b", display_name: "B" }),
-      item({ kind: "club", name_normalized: "c", display_name: "C" }),
+      item({ kind: "club", name_normalized: "a" }),
+      item({ kind: "club", name_normalized: "b" }),
+      item({ kind: "club", name_normalized: "c" }),
     ]);
     const http = new FakeHttp(new Map());
     const budget = new FakeBudget(1);
 
-    const report = await resolveMedia({ queue, budget, http });
+    const report = await resolveMedia({ queue, budget, http, sleep: noSleep });
 
     assert.equal(report.attempted, 1);
     assert.equal(report.budgetExhausted, true);
@@ -111,11 +140,11 @@ describe("resolveMedia", () => {
 
   it("respecte batchSize indépendamment de la taille de la file", async () => {
     const queue = new FakeQueue(
-      Array.from({ length: 100 }, (_, i) => item({ kind: "club", name_normalized: `c${i}`, display_name: `C${i}` })),
+      Array.from({ length: 100 }, (_, i) => item({ kind: "club", name_normalized: `c${i}` })),
     );
     const http = new FakeHttp(new Map());
 
-    const report = await resolveMedia({ queue, budget: new FakeBudget(80), http }, { batchSize: 10 });
+    const report = await resolveMedia({ queue, budget: new FakeBudget(80), http, sleep: noSleep }, { batchSize: 10 });
 
     assert.equal(report.attempted, 10);
   });
@@ -123,9 +152,33 @@ describe("resolveMedia", () => {
   it("ne fait aucun appel réseau sur une file vide", async () => {
     const queue = new FakeQueue([]);
     const http = new FakeHttp(new Map());
-    const report = await resolveMedia({ queue, budget: new FakeBudget(80), http });
+    const report = await resolveMedia({ queue, budget: new FakeBudget(80), http, sleep: noSleep });
 
     assert.deepEqual(report, { attempted: 0, resolved: 0, missed: 0, budgetExhausted: false });
     assert.equal(http.calls.length, 0);
+  });
+});
+
+describe("erreur d'accès API", () => {
+  it("s'arrête net sans pénaliser la file", async () => {
+    const queue = new FakeQueue([
+      item({ kind: "club", name_normalized: "chelsea fc" }),
+      item({ kind: "club", name_normalized: "arsenal fc" }),
+      item({ kind: "club", name_normalized: "sl benfica" }),
+    ]);
+    const suspended = {
+      errors: { access: "Your account is suspended, check on https://dashboard.api-football.com." },
+      response: [],
+    };
+    const http: ApiFootballHttp = { get: async () => suspended };
+
+    const report = await resolveMedia({ queue, budget: new FakeBudget(80), http, sleep: noSleep });
+
+    assert.equal(report.attempted, 1, "on cesse dès la première réponse inexploitable");
+    assert.match(String(report.accessError), /suspended/);
+    // Le point qui compte : aucune ligne ne doit être marquée en échec, sinon
+    // trois passages sur un compte suspendu les excluraient définitivement.
+    assert.deepEqual(queue.missed, []);
+    assert.deepEqual(queue.resolved, []);
   });
 });

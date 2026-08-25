@@ -1,14 +1,27 @@
 // Même choix que lib/sources/apifootball.ts : aucun secret lu ici, donc pas de
 // `import "server-only"`, pour rester testable directement.
-import { searchClub, searchPlayer, type ApiFootballHit, type ApiFootballHttp } from "./sources/apifootball.ts";
+import {
+  ApiFootballAccessError,
+  searchClub,
+  searchPlayer,
+  type ApiFootballHit,
+  type ApiFootballHttp,
+} from "./sources/apifootball.ts";
 
 export type MediaKind = "club" | "player";
 
 export type PendingMedia = {
   kind: MediaKind;
+  /**
+   * Sert à la fois de clé de cache ET de terme de recherche.
+   *
+   * API-Football refuse tout ce qui n'est pas alphanumérique ou espace —
+   * vérifié contre le vrai service : « Paris Saint-Germain » et « Atlético
+   * Madrid » sont rejetés avec `The Search field may only contain
+   * alpha-numeric characters and spaces`, là où « paris saint germain »
+   * renvoie bien le PSG. `normalizeName()` produit exactement cette forme.
+   */
   name_normalized: string;
-  /** Nom tel qu'écrit par la source. Sert la requête ; jamais la clé de cache. */
-  display_name: string;
 };
 
 export interface MediaQueue {
@@ -32,6 +45,8 @@ export type ResolveMediaReport = {
   resolved: number;
   missed: number;
   budgetExhausted: boolean;
+  /** Renseigné quand le compte ou la cadence a coupé l'accès. */
+  accessError?: string;
 };
 
 /**
@@ -44,15 +59,31 @@ export type ResolveMediaReport = {
  * reprendre demain que de risquer de dépasser le quota réel de la source.
  */
 export async function resolveMedia(
-  deps: { queue: MediaQueue; budget: DailyBudget; http: ApiFootballHttp },
-  options: { batchSize?: number } = {},
+  deps: {
+    queue: MediaQueue;
+    budget: DailyBudget;
+    http: ApiFootballHttp;
+    /** Injecté pour que les tests n'attendent pas réellement. */
+    sleep?: (ms: number) => Promise<void>;
+  },
+  options: { batchSize?: number; spacingMs?: number } = {},
 ): Promise<ResolveMediaReport> {
-  const batchSize = options.batchSize ?? 40;
+  // API-Football plafonne aussi à 10 requêtes/minute — une limite absente de la
+  // présentation du plan Free, découverte en interrogeant le vrai service. Sans
+  // étalement, un lot se ferait refuser dès la onzième ligne.
+  const spacingMs = options.spacingMs ?? 6_500;
+  // 8 x 6,5 s = 52 s, sous les 60 s de `maxDuration` de la route. Le facteur
+  // limitant est le temps d'exécution, pas le quota : à 8 visuels toutes les
+  // 30 minutes, le budget de 80/jour reste le vrai plafond.
+  const batchSize = options.batchSize ?? 8;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+
   const pending = await deps.queue.listPending(batchSize);
 
   const report: ResolveMediaReport = { attempted: 0, resolved: 0, missed: 0, budgetExhausted: false };
 
-  for (const item of pending) {
+  for (const [index, item] of pending.entries()) {
+    if (index > 0) await sleep(spacingMs);
     const allowed = await deps.budget.tryConsumeOne();
     if (!allowed) {
       report.budgetExhausted = true;
@@ -61,7 +92,20 @@ export async function resolveMedia(
 
     report.attempted += 1;
     const search = item.kind === "club" ? searchClub : searchPlayer;
-    const hit = await search(deps.http, item.display_name);
+
+    let hit: ApiFootballHit | null;
+    try {
+      hit = await search(deps.http, item.name_normalized);
+    } catch (cause) {
+      // Compte suspendu ou cadence dépassée : on s'arrête immédiatement sans
+      // compter d'échec. Marquer ces lignes en échec les condamnerait au bout
+      // de trois passages, alors que le problème ne vient pas d'elles.
+      if (cause instanceof ApiFootballAccessError) {
+        report.accessError = cause.message;
+        break;
+      }
+      throw cause;
+    }
 
     if (hit) {
       await deps.queue.markResolved(item.kind, item.name_normalized, hit);

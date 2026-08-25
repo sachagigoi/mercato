@@ -75,7 +75,6 @@ export function createSupabaseStores(): { transfers: TransferStore; media: Media
         [...unique.values()].map((k) => ({
           kind: k.kind,
           name_normalized: normalizeName(k.name),
-          display_name: k.name,
         })),
         { onConflict: "kind,name_normalized", ignoreDuplicates: true },
       );
@@ -101,7 +100,7 @@ export function createMediaResolutionStores(): { queue: MediaQueue; budget: Dail
     async listPending(limit) {
       const { data, error } = await supabase
         .from("media_cache")
-        .select("kind, name_normalized, display_name")
+        .select("kind, name_normalized")
         .is("image_url", null)
         .lt("miss_count", 3)
         .order("fetched_at", { ascending: true })
@@ -113,9 +112,6 @@ export function createMediaResolutionStores(): { queue: MediaQueue; budget: Dail
         (row): PendingMedia => ({
           kind: row.kind as PendingMedia["kind"],
           name_normalized: row.name_normalized,
-          // Repli sur le nom normalisé pour une ligne antérieure à display_name.
-          // La table est vide en Phase 4 ; ce repli n'a pas vocation à durer.
-          display_name: row.display_name ?? row.name_normalized,
         }),
       );
     },

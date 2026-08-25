@@ -14,6 +14,8 @@ import type { Transfer } from "@/lib/types";
 const HIGHLIGHT_MS = 1500;
 /** Cadence du repli quand l'abonnement Realtime est indisponible (§10 des specs). */
 const POLL_MS = 60_000;
+/** Au-delà, on considère l'abonnement perdu et on bascule sur le repli. */
+const CONNECT_TIMEOUT_MS = 10_000;
 
 type Highlight = "in" | "pulse";
 
@@ -121,19 +123,31 @@ export function MercatoFeed({
 
   useEffect(() => {
     const supabase = getBrowserClient();
+
+    // Garde-fou : un abonnement peut rester en attente indéfiniment sans jamais
+    // émettre CHANNEL_ERROR — c'est ce qui arrive quand la WebSocket n'aboutit
+    // pas (réseau qui l'interdit, proxy qui ne la relaie pas). Sans ce délai,
+    // le feed resterait figé sur « Connexion » et le repli ne partirait jamais.
+    const watchdog = setTimeout(() => {
+      setStatus((current) => (current === "connecting" ? "polling" : current));
+    }, CONNECT_TIMEOUT_MS);
+
     const channel = supabase
       .channel("transfers-feed")
       .on("postgres_changes", { event: "*", schema: "public", table: "transfers" }, onChange)
       .subscribe((state) => {
         if (state === "SUBSCRIBED") {
+          clearTimeout(watchdog);
           setStatus("live");
           void catchUp();
         } else if (state === "CHANNEL_ERROR" || state === "TIMED_OUT" || state === "CLOSED") {
+          clearTimeout(watchdog);
           setStatus("polling");
         }
       });
 
     return () => {
+      clearTimeout(watchdog);
       void supabase.removeChannel(channel);
     };
   }, [catchUp, onChange]);

@@ -34,6 +34,35 @@ export function createApiFootballHttp(apiKey: string): ApiFootballHttp {
 // Schémas volontairement permissifs : on ne valide que les champs qu'on lit.
 // API-Football est un tiers — une réponse inattendue doit produire un "pas
 // trouvé", jamais une exception qui interrompt tout le lot.
+/**
+ * Erreurs renvoyées en HTTP 200 par API-Football.
+ *
+ * Le service ne signale ni le dépassement de cadence ni la suspension par un
+ * code d'erreur HTTP : il répond 200 avec un objet `errors` non vide. Sans
+ * cette distinction, une clé suspendue se lit comme « club introuvable », et
+ * le pipeline incrémente joyeusement `miss_count` sur des lignes parfaitement
+ * valides jusqu'à les condamner définitivement.
+ */
+const ErrorEnvelope = z.object({
+  errors: z.union([z.record(z.string(), z.string()), z.array(z.unknown())]),
+});
+
+export class ApiFootballAccessError extends Error {}
+
+/** Lève sur une erreur de compte ou de cadence ; ne dit rien d'un simple « pas trouvé ». */
+export function assertUsable(payload: unknown): void {
+  const parsed = ErrorEnvelope.safeParse(payload);
+  if (!parsed.success) return;
+
+  const { errors } = parsed.data;
+  if (Array.isArray(errors) || Object.keys(errors).length === 0) return;
+
+  const detail = Object.entries(errors)
+    .map(([k, v]) => `${k} : ${v}`)
+    .join(" ; ");
+  throw new ApiFootballAccessError(detail);
+}
+
 const TeamsResponse = z.object({
   response: z.array(
     z.object({ team: z.object({ id: z.number(), logo: z.string().nullish() }) }),
@@ -48,7 +77,9 @@ const PlayersResponse = z.object({
 
 /** Cherche un club par nom. `null` si absent ou si la réponse est inexploitable. */
 export async function searchClub(http: ApiFootballHttp, name: string): Promise<ApiFootballHit | null> {
-  const parsed = TeamsResponse.safeParse(await http.get(`/teams?search=${encodeURIComponent(name)}`));
+  const payload = await http.get(`/teams?search=${encodeURIComponent(name)}`);
+  assertUsable(payload);
+  const parsed = TeamsResponse.safeParse(payload);
   const hit = parsed.success ? parsed.data.response[0]?.team : undefined;
   return hit?.logo ? { af_id: hit.id, image_url: hit.logo } : null;
 }
@@ -59,9 +90,9 @@ export async function searchClub(http: ApiFootballHttp, name: string): Promise<A
  * qui donne le portrait pour le détourage (§6 des specs).
  */
 export async function searchPlayer(http: ApiFootballHttp, name: string): Promise<ApiFootballHit | null> {
-  const parsed = PlayersResponse.safeParse(
-    await http.get(`/players/profiles?search=${encodeURIComponent(name)}`),
-  );
+  const payload = await http.get(`/players/profiles?search=${encodeURIComponent(name)}`);
+  assertUsable(payload);
+  const parsed = PlayersResponse.safeParse(payload);
   const hit = parsed.success ? parsed.data.response[0]?.player : undefined;
   return hit?.photo ? { af_id: hit.id, image_url: hit.photo } : null;
 }

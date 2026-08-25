@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { searchClub, searchPlayer, type ApiFootballHttp } from "./apifootball.ts";
+import {
+  ApiFootballAccessError,
+  assertUsable,
+  searchClub,
+  searchPlayer,
+  type ApiFootballHttp,
+} from "./apifootball.ts";
 
 const httpOf = (response: unknown): ApiFootballHttp => ({ get: async () => response });
 
@@ -42,5 +48,39 @@ describe("searchPlayer", () => {
 
   it("renvoie null sur une réponse vide", async () => {
     assert.equal(await searchPlayer(httpOf({ response: [] }), "Inconnu"), null);
+  });
+});
+
+describe("erreurs d'accès", () => {
+  // API-Football ne signale ni suspension ni dépassement de cadence par un code
+  // HTTP : il répond 200 avec un objet `errors` non vide. Confondre ça avec un
+  // « pas trouvé » condamnerait des lignes valides au bout de trois passages.
+  it("distingue une suspension de compte d'un résultat vide", async () => {
+    const suspended = {
+      errors: { access: "Your account is suspended, check on https://dashboard.api-football.com." },
+      response: [],
+    };
+    await assert.rejects(
+      () => searchClub(httpOf(suspended), "chelsea fc"),
+      ApiFootballAccessError,
+    );
+  });
+
+  it("distingue un dépassement de cadence d'un résultat vide", async () => {
+    const rateLimited = {
+      errors: { rateLimit: "Too many requests. Your rate limit is 10 requests per minute." },
+      response: [],
+    };
+    await assert.rejects(
+      () => searchPlayer(httpOf(rateLimited), "marc guiu"),
+      ApiFootballAccessError,
+    );
+  });
+
+  it("laisse passer un vrai résultat vide, qui est un « pas trouvé » légitime", () => {
+    assert.doesNotThrow(() => assertUsable({ errors: [], response: [] }));
+    assert.doesNotThrow(() => assertUsable({ errors: {}, response: [] }));
+    assert.doesNotThrow(() => assertUsable({ response: [] }));
+    assert.doesNotThrow(() => assertUsable(null));
   });
 });

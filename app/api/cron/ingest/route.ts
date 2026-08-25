@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { ingest } from "@/lib/ingest";
 import { resolveMedia } from "@/lib/resolve-media";
 import { createApiFootballHttp } from "@/lib/sources/apifootball";
-import { fetchFixtureRumours } from "@/lib/sources/fixtures";
+import { fetchRumours } from "@/lib/sources/transfermarkt";
 import { createMediaResolutionStores, createSupabaseStores } from "@/lib/supabase/store";
 
 export const runtime = "nodejs";
@@ -36,7 +36,7 @@ async function run(request: Request) {
   }
 
   try {
-    const raw = await fetchFixtureRumours();
+    const raw = await fetchRumours();
     const ingestion = await ingest(raw, createSupabaseStores());
 
     // La résolution de visuels suit l'ingestion dans le même passage : la
