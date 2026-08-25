@@ -3,7 +3,13 @@
 > Feed temps réel de transferts et rumeurs football. Next.js 16 (App Router) · Supabase · Tailwind v4.
 > Document de référence unique pour le MVP.
 
-**État : Phases 0 à 3 livrées.** Base en ligne et vérifiée, carte et grille en place, filtres et
+**État : les 6 phases sont livrées. Reste le déploiement Vercel.**
+
+> **Reprise de session — à lire en premier.** Tout est poussé sur
+> `claude/mercato-webapp-mvp-agsll7` (seule branche, donc branche par défaut).
+> Le point de blocage courant et la marche à suivre sont en §12.
+
+**Historique :** Base en ligne et vérifiée, carte et grille en place, filtres et
 Realtime branchés, pipeline d'ingestion idempotent et route cron protégée — cf. §11.
 Reste la Phase 4 : scraper réel et détourage.
 
@@ -849,3 +855,62 @@ l'application. En local et sur Vercel, l'accès est direct et fonctionne.
 
 Pour lever la restriction en session web, ajouter l'hôte aux réglages d'egress de l'environnement.
 Sans cela, `/preview` reste le moyen de travailler le design, puisqu'il ne dépend pas de la base.
+
+---
+
+## 12. Point de reprise
+
+### Ce qui tourne déjà, vérifié en conditions réelles
+
+| Brique | État |
+|---|---|
+| Base Supabase `jfqtgphbpogfvofgtnax` | Schéma, RLS, Realtime, Storage, seed — en ligne |
+| Scraper Transfermarkt | 15 rumeurs/passage, ~10 probabilités, portraits **et** écussons |
+| Ingestion idempotente | 3 exécutions → 0 doublon, vérifié sur données réelles |
+| Worker de détourage | Tourne sur GitHub Actions, run manuel en succès |
+| Tests | 58 `node:test`, `npm test` |
+
+**API-Football n'est plus nécessaire.** Le compte est bloqué définitivement, mais
+Transfermarkt fournit portraits et écussons sans clé ni quota. La route dégrade
+proprement quand `API_FOOTBALL_KEY` est absente — ne pas la remettre.
+
+### Ce qu'il reste à faire
+
+**1. Déployer sur Vercel.** Les outils MCP Vercel se sont déconnectés en cours de
+session précédente. Au redémarrage, vérifier leur présence puis créer le projet.
+
+Variables d'environnement à poser sur Vercel :
+
+```
+NEXT_PUBLIC_SUPABASE_URL       https://jfqtgphbpogfvofgtnax.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY  sb_publishable_52_4InDp2lIYj1xVJSGMrQ_If4zg-Z7
+SUPABASE_SERVICE_ROLE_KEY      (Supabase > Project Settings > API)
+CRON_SECRET                    (aléatoire, à répliquer côté GitHub)
+```
+
+Branche de production : `claude/mercato-webapp-mvp-agsll7`.
+Le build passe sans `.env.local` — vérifié.
+
+**2. Deux secrets GitHub après le déploiement**, pour le workflow d'ingestion :
+`MERCATO_URL` (l'URL Vercel) et `CRON_SECRET` (identique à celui de Vercel).
+Les secrets du worker de détourage (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`)
+sont déjà en place et éprouvés.
+
+**3. Vérifier le Realtime.** C'est le seul morceau du MVP **jamais validé en
+conditions réelles** : la WebSocket ne s'établit pas depuis une session Claude
+Code web, et le repli polling 60 s prend le relais en masquant le problème.
+Une fois en ligne, ouvrir le feed et confirmer que l'indicateur de la barre de
+filtres affiche **« En direct »** et non « Différé 60 s », puis faire un
+`update` de `probability_score` en SQL et vérifier que la jauge bouge sans
+rechargement.
+
+### Pièges d'environnement rencontrés
+
+- **`NODE_USE_ENV_PROXY=1`** est nécessaire en session Claude Code web : le
+  `fetch` de Node ignore `HTTPS_PROXY` et sort par une route dont l'egress est
+  plus strict. Inutile en local et sur Vercel.
+- **`www.transfermarkt.fr` n'est pas dans l'allowlist** de l'environnement,
+  `.com` oui — d'où la locale retenue. Sans conséquence produit, les libellés de
+  statut étant dérivés de la probabilité.
+- **Cron Vercel** : plafonné à un par jour sur le plan Hobby, et le déploiement
+  est *refusé* au-delà. D'où l'ingestion déplacée sur GitHub Actions (§8).
