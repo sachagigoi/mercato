@@ -991,6 +991,8 @@ aujourd'hui.
 | Route cron | 401 sans jeton, 200 avec — `CRON_SECRET` est bien en place |
 | Ingestion, 1er passage | 15 scannées, 12 insérées, 3 mises à jour, 0 écartée, 0 erreur |
 | Ingestion, 2e passage | 15 scannées, **0 insérée**, 15 mises à jour — idempotence tenue en ligne |
+| Valeurs de marché | 10 fiches demandées, 10 résolues, 0 échec au premier passage |
+| Pays et championnat | 15 rumeurs situées sur 15 |
 | Doublons | 87 lignes, 87 `external_id` distincts |
 | API-Football | `media: { skipped: "API_FOOTBALL_KEY absente" }` — la dégradation prévue, sans échec |
 
@@ -1005,7 +1007,18 @@ les fonctions, sans le `NODE_USE_ENV_PROXY` nécessaire en session web.
 appel. Les secrets du worker de détourage (`SUPABASE_URL`,
 `SUPABASE_SERVICE_ROLE_KEY`) sont déjà en place et éprouvés.
 
-**2. Vérifier le Realtime.** C'est le seul morceau du MVP **jamais validé en
+**2. Rattraper les valeurs de marché.** La résolution traite dix joueurs par
+passage, et le rattrapage de `tm_player_id` en a mis soixante-cinq en file : le
+feed se remplit donc au rythme du cron, quelques heures. Rien à faire, sinon
+constater — mais tant que les secrets GitHub du point 1 manquent, le cron ne
+tourne pas, et la file n'avance pas.
+
+Le pays, lui, ne se rattrape pas : il n'est pas dans la clé naturelle, et il
+faudrait retrouver chaque ancienne rumeur dans une page qui ne les liste plus.
+Les lignes moissonnées avant cette version resteront donc hors des puces de
+pays jusqu'à leur sortie du feed.
+
+**3. Vérifier le Realtime.** C'est le seul morceau du MVP **jamais validé en
 conditions réelles** : la WebSocket ne s'établit pas depuis une session Claude
 Code web, et le repli polling 60 s prend le relais en masquant le problème. Le
 HTML servi ne tranche pas davantage — l'indicateur part de « Connexion » et ne
@@ -1014,7 +1027,7 @@ Ouvrir le feed, confirmer que l'indicateur de la barre de filtres affiche
 **« En direct »** et non « Différé 60 s », puis faire un `update` de
 `probability_score` en SQL et vérifier que la jauge bouge sans rechargement.
 
-**3. Rapprocher les fonctions de la base.** Le projet a été créé en `iad1`
+**4. Rapprocher les fonctions de la base.** Le projet a été créé en `iad1`
 (Washington) alors que la base est en `eu-west-3` (Paris) : chaque rendu
 serveur du feed traverse l'Atlantique deux fois. *Settings > Functions >
 Function Region* → `cdg1`. Le plan Hobby autorise une région, changeable
