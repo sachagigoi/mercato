@@ -70,6 +70,24 @@ export function parsePublishedAt(value: string): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+/**
+ * Portrait du joueur, en grand format.
+ *
+ * La page sert des vignettes `/portrait/medium/` de 100 × 130 px — sous la
+ * porte de qualité de 200 px du worker de détourage, qui les écarterait toutes.
+ * Le même identifiant en `/portrait/big/` rend du 300 × 390 px, cadré
+ * tête-épaules sur fond flou : le point de départ idéal pour le détourage.
+ *
+ * Conséquence : les portraits ne coûtent plus rien au quota API-Football, qui
+ * n'a plus à résoudre que les écussons de clubs.
+ */
+export function portraitUrl(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const url = raw.split("?")[0];
+  if (!/img\.a\.transfermarkt\.technology\/portrait\//.test(url)) return null;
+  return url.replace("/portrait/medium/", "/portrait/big/");
+}
+
 /** Extrait l'identifiant Transfermarkt d'une URL de profil ou de club. */
 export function extractId(href: string | undefined, kind: "spieler" | "verein"): string | null {
   if (!href) return null;
@@ -80,7 +98,7 @@ export function extractId(href: string | undefined, kind: "spieler" | "verein"):
 /**
  * Analyse la page des rumeurs récentes.
  *
- * Structure observée sur transfermarkt.fr (vérifiée sur la page réelle) :
+ * Structure vérifiée sur la page réelle :
  *   td0 joueur (lien /profil/spieler/{id})  td1 âge      td2 drapeau
  *   td3 club actuel                          td4 club intéressé
  *   td5 date de publication                  td6 probabilité de transfert
@@ -106,6 +124,10 @@ export function parseRumours(html: string): RawTransferInput[] {
     const playerId = extractId(playerLink.attr("href"), "spieler");
     if (!playerName) return;
 
+    // Les images sont en chargement différé : l'URL réelle est dans data-src.
+    const portraitImg = $(tds[0]).find("img").first();
+    const playerPhoto = portraitUrl(portraitImg.attr("data-src") ?? portraitImg.attr("src"));
+
     const fromLink = $(tds[3]).find("a").first();
     const toLink = $(tds[4]).find("a").first();
     const fromClub = frenchClub(dedupeLabel(fromLink.attr("title") ?? ""));
@@ -127,6 +149,7 @@ export function parseRumours(html: string): RawTransferInput[] {
     out.push({
       externalId,
       playerName,
+      playerPhoto,
       // La colonne drapeau donne un pays en toutes lettres (« Danemark »), pas un
       // code ISO. Le convertir demanderait une table de correspondance FR -> ISO :
       // à faire quand le drapeau sur la carte le justifiera, pas avant.

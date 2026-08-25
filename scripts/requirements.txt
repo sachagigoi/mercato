@@ -1,0 +1,6 @@
+# Worker de détourage (scripts/cutout.py). Épinglé pour que le rendu ne change
+# pas d'un run à l'autre : un modèle qui bouge, c'est un cadrage qui bouge.
+rembg==2.0.67
+onnxruntime==1.20.1
+pillow==11.1.0
+httpx==0.28.1

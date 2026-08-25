@@ -1,0 +1,53 @@
+name: Détourage des portraits
+
+# Tourne ici plutôt que sur Vercel : le modèle pèse une centaine de mégaoctets
+# et met quelques secondes par image, ce qui ne tient pas dans une fonction
+# serverless plafonnée à 60 s. Le job n'est pas critique en latence — la carte
+# s'affiche avec le masque circulaire en attendant.
+on:
+  schedule:
+    # Toutes les 30 minutes. Les crons GitHub sont « best effort » : un retard
+    # de 5 à 20 minutes en heure de pointe est normal et sans conséquence ici.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Portraits traités"
+        required: false
+        default: "40"
+
+concurrency:
+  # Deux passages simultanés se disputeraient les mêmes lignes de la file.
+  group: cutout
+  cancel-in-progress: false
+
+jobs:
+  cutout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+
+      - name: Installer les dépendances
+        run: pip install -r scripts/requirements.txt
+
+      # Le modèle fait ~90 Mo et ne change jamais à version figée : le
+      # retélécharger à chaque passage coûterait plus que le détourage lui-même.
+      - name: Restaurer le modèle
+        uses: actions/cache@v4
+        with:
+          path: ~/.u2net
+          key: rembg-isnet-general-use-v1
+
+      - name: Détourer
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python scripts/cutout.py --limit ${{ inputs.limit || '40' }}

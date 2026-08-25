@@ -66,20 +66,40 @@ export function createSupabaseStores(): { transfers: TransferStore; media: Media
 
     async enqueue(keys) {
       const unique = new Map<string, MediaKey>();
-      for (const key of keys) unique.set(mediaKey(key.kind, key.name), key);
+      for (const key of keys) {
+        const id = mediaKey(key.kind, key.name);
+        // Une clé porteuse d'image l'emporte sur une clé nue pour le même nom.
+        if (key.imageUrl || !unique.has(id)) unique.set(id, key);
+      }
       if (unique.size === 0) return;
 
-      // ignoreDuplicates : on inscrit un inconnu, on ne réinitialise jamais une
-      // entrée déjà résolue ni son compteur d'échecs.
-      const { error } = await supabase.from("media_cache").upsert(
-        [...unique.values()].map((k) => ({
-          kind: k.kind,
-          name_normalized: normalizeName(k.name),
-        })),
-        { onConflict: "kind,name_normalized", ignoreDuplicates: true },
-      );
+      const all = [...unique.values()];
+      const withImage = all.filter((k) => k.imageUrl);
+      const withoutImage = all.filter((k) => !k.imageUrl);
 
-      if (error) throw new Error(`file de visuels : ${error.message}`);
+      // Sans image : simple inscription en file. ignoreDuplicates protège une
+      // entrée déjà résolue et son compteur d'échecs.
+      if (withoutImage.length > 0) {
+        const { error } = await supabase.from("media_cache").upsert(
+          withoutImage.map((k) => ({ kind: k.kind, name_normalized: normalizeName(k.name) })),
+          { onConflict: "kind,name_normalized", ignoreDuplicates: true },
+        );
+        if (error) throw new Error(`file de visuels : ${error.message}`);
+      }
+
+      // Avec image : on écrit l'URL, y compris sur une entrée existante. Le
+      // portrait de la source est plus frais que ce que le cache contenait.
+      if (withImage.length > 0) {
+        const { error } = await supabase.from("media_cache").upsert(
+          withImage.map((k) => ({
+            kind: k.kind,
+            name_normalized: normalizeName(k.name),
+            image_url: k.imageUrl ?? null,
+          })),
+          { onConflict: "kind,name_normalized", ignoreDuplicates: false },
+        );
+        if (error) throw new Error(`file de visuels (avec image) : ${error.message}`);
+      }
     },
   };
 

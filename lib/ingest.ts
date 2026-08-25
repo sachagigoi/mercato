@@ -22,6 +22,8 @@ export const TRANSFER_TYPES = ["TRANSFER", "RUMOUR", "EXTENSION"] as const;
 export const RawTransferSchema = z.object({
   externalId: z.string().min(1).max(200),
   playerName: z.string().min(1).max(120),
+  /** Portrait fourni par la source ; prioritaire sur le cache de visuels. */
+  playerPhoto: z.string().url().max(500).nullish(),
   nationalityCode: z.string().length(2).nullish(),
   fromClub: z.string().max(120).nullish(),
   toClub: z.string().max(120).nullish(),
@@ -38,7 +40,12 @@ export type RawTransferInput = z.input<typeof RawTransferSchema>;
 type ValidRawTransfer = z.output<typeof RawTransferSchema>;
 
 export type MediaKind = "club" | "player";
-export type MediaKey = { kind: MediaKind; name: string };
+/**
+ * `imageUrl` renseigné = la source fournit déjà le visuel, aucune résolution
+ * n'est nécessaire. C'est le cas des portraits Transfermarkt, qui arrivent
+ * gratuitement avec la page des rumeurs.
+ */
+export type MediaKey = { kind: MediaKind; name: string; imageUrl?: string | null };
 export type MediaAsset = { image_url: string | null; cutout_url: string | null };
 
 /** Ligne déjà en base, réduite à ce dont l'ingestion a besoin pour décider. */
@@ -158,7 +165,9 @@ export function normalize(
   return {
     external_id: raw.externalId,
     player_name: raw.playerName,
-    player_photo: player?.image_url ?? null,
+    // Le portrait de la source prime sur le cache : il est plus frais, et il
+    // n'a rien coûté en quota. Le cache ne sert plus que de repli.
+    player_photo: raw.playerPhoto ?? player?.image_url ?? null,
     player_cutout: player?.cutout_url ?? null,
     nationality_code: raw.nationalityCode?.toLowerCase() ?? null,
     from_club_name: raw.fromClub ?? null,
@@ -217,13 +226,20 @@ export async function ingest(
   // Phase 4 — aucun appel réseau n'est fait ici.
   const keys: MediaKey[] = [];
   for (const row of rows) {
-    keys.push({ kind: "player", name: row.playerName });
+    keys.push({ kind: "player", name: row.playerName, imageUrl: row.playerPhoto ?? null });
     if (row.fromClub) keys.push({ kind: "club", name: row.fromClub });
     if (row.toClub) keys.push({ kind: "club", name: row.toClub });
   }
   const media = await stores.media.lookup(keys);
-  const missing = keys.filter((k) => !media.has(mediaKey(k.kind, k.name)));
-  if (missing.length > 0) await stores.media.enqueue(missing);
+
+  // On inscrit les inconnus, mais aussi les joueurs dont la source apporte un
+  // portrait : c'est ce qui alimente la file du worker de détourage. Sans ça,
+  // le portrait n'existerait que sur la ligne `transfers` et le worker, qui lit
+  // `media_cache`, n'aurait jamais rien à traiter.
+  const toEnqueue = keys.filter(
+    (k) => !media.has(mediaKey(k.kind, k.name)) || Boolean(k.imageUrl),
+  );
+  if (toEnqueue.length > 0) await stores.media.enqueue(toEnqueue);
 
   const externalIds = rows.map((r) => r.externalId);
   const existingRows = await stores.transfers.findByExternalIds(externalIds);

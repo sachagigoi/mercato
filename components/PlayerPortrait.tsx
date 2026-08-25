@@ -1,10 +1,19 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ACCENT, type Accent } from "@/lib/accent";
 
 type Level = "cutout" | "photo" | "silhouette";
+
+/**
+ * Au-delà, on considère l'image perdue et on descend d'un niveau.
+ *
+ * `onError` ne couvre que les échecs francs. Une requête qui reste en suspens —
+ * CDN lent, réseau qui filtre sans répondre — n'émet jamais d'erreur : sans ce
+ * délai, la carte resterait indéfiniment vide, ni portrait ni silhouette.
+ */
+const LOAD_TIMEOUT_MS = 6000;
 
 function initialLevel(cutout: string | null, photo: string | null): Level {
   if (cutout) return "cutout";
@@ -38,10 +47,24 @@ export function PlayerPortrait({
   accent: Accent;
 }) {
   const [level, setLevel] = useState<Level>(() => initialLevel(cutout, photo));
+  const [loaded, setLoaded] = useState(false);
   const a = ACCENT[accent];
 
-  const degrade = () =>
+  const degrade = () => {
+    setLoaded(false);
     setLevel((current) => (current === "cutout" && photo ? "photo" : "silhouette"));
+  };
+
+  // Garde-fou sur les images qui ne répondent pas. Réarmé à chaque changement
+  // de niveau : le repli doit être surveillé comme le niveau qu'il remplace.
+  const degradeRef = useRef(degrade);
+  degradeRef.current = degrade;
+
+  useEffect(() => {
+    if (level === "silhouette" || loaded) return;
+    const timer = setTimeout(() => degradeRef.current(), LOAD_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [level, loaded]);
 
   return (
     <div className="relative h-24 w-[88px] shrink-0">
@@ -73,6 +96,7 @@ export function PlayerPortrait({
           width={80}
           height={80}
           onError={degrade}
+          onLoad={() => setLoaded(true)}
           className="absolute bottom-1 left-1/2 size-20 -translate-x-1/2 rounded-full object-cover ring-2 ring-slate-800"
           unoptimized
         />
