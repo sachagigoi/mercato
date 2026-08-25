@@ -29,7 +29,11 @@ from dataclasses import dataclass, field
 
 import httpx
 from PIL import Image
-from rembg import new_session, remove
+
+# `rembg` et son runtime ONNX mettent une trentaine de secondes à se charger.
+# L'import est donc différé jusqu'après la vérification de l'environnement :
+# sans ça, un secret manquant met 33 s à se signaler au lieu d'une fraction
+# de seconde — constaté sur un vrai run GitHub Actions.
 
 # --- Réglages ---------------------------------------------------------------
 
@@ -185,6 +189,8 @@ def cut_out(source: Image.Image, session) -> Image.Image:
     sans lui, un sujet excentré ou entouré de vide s'afficherait tout petit dans
     la boîte de la carte.
     """
+    from rembg import remove
+
     cut = remove(
         source,
         session=session,
@@ -281,6 +287,8 @@ def main() -> int:
         return 0
 
     print(f"{len(items)} portrait(s) en attente. Chargement du modèle {MODEL}…")
+    from rembg import new_session
+
     session = new_session(MODEL)
 
     for item in items:
