@@ -2,8 +2,10 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { ingest } from "@/lib/ingest";
+import { resolveMedia } from "@/lib/resolve-media";
+import { createApiFootballHttp } from "@/lib/sources/apifootball";
 import { fetchFixtureRumours } from "@/lib/sources/fixtures";
-import { createSupabaseStores } from "@/lib/supabase/store";
+import { createMediaResolutionStores, createSupabaseStores } from "@/lib/supabase/store";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -35,12 +37,33 @@ async function run(request: Request) {
 
   try {
     const raw = await fetchFixtureRumours();
-    const report = await ingest(raw, createSupabaseStores());
-    return NextResponse.json(report);
+    const ingestion = await ingest(raw, createSupabaseStores());
+
+    // La résolution de visuels suit l'ingestion dans le même passage : la
+    // moisson vient de remplir la file, autant la vider tout de suite plutôt
+    // que d'attendre le cron suivant pour que les cartes aient leurs logos.
+    const media = await resolveMediaIfConfigured();
+
+    return NextResponse.json({ ingestion, media });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "Erreur inconnue";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+/**
+ * Sans `API_FOOTBALL_KEY`, l'ingestion reste pleinement fonctionnelle — les
+ * cartes sortent simplement sans visuels, et le repli initiales du §4.5 prend
+ * le relais. Une clé manquante ne doit pas faire échouer la moisson.
+ */
+async function resolveMediaIfConfigured() {
+  const apiKey = process.env.API_FOOTBALL_KEY;
+  if (!apiKey) return { skipped: "API_FOOTBALL_KEY absente" } as const;
+
+  return resolveMedia({
+    ...createMediaResolutionStores(),
+    http: createApiFootballHttp(apiKey),
+  });
 }
 
 /** Vercel Cron appelle en GET ; POST reste ouvert pour un déclenchement manuel. */
