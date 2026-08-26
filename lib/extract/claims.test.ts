@@ -16,7 +16,7 @@ const claim = (over: Partial<RawClaim> = {}): RawClaim => ({
   player: "Bradley Barcola",
   fromClub: "Paris Saint-Germain",
   toClub: "Liverpool",
-  feeEur: 70_000_000,
+  feeText: "70 M€",
   feeKind: "transfert",
   stance: "discussions",
   sentence: 2,
@@ -43,11 +43,24 @@ describe("acceptClaim", () => {
     assert.ok(ARTICLE.includes(v.claim.quote), "citation absente du texte");
   });
 
+  it("ne demande jamais au modèle de convertir un montant", () => {
+    // « 100 M€ » recopié, pas 100000000 calculé : la multiplication est ce
+    // qu'un petit modèle rate le plus souvent, et un parseur testé existe.
+    const v = acceptClaim(claim({ feeText: "70 M€" }), ARTICLE);
+    assert.ok(v.ok);
+    assert.equal(v.claim.feeEur, 70_000_000);
+  });
+
+  it("tolère les espaces insécables du texte source", () => {
+    const v = acceptClaim(claim({ feeText: "70M€" }), ARTICLE);
+    assert.ok(v.ok, "recopie sans espace refusée");
+  });
+
   it("rejette un montant absent de la phrase désignée", () => {
     // L'hallucination qui coûte le plus cher : un chiffre plausible, bien
     // formé, et introuvable dans l'article. C'est ce contrôle qui rend un
     // modèle local acceptable pour afficher de l'argent.
-    const v = acceptClaim(claim({ feeEur: 85_000_000 }), ARTICLE);
+    const v = acceptClaim(claim({ feeText: "85 M€" }), ARTICLE);
     assert.equal(v.ok, false);
     assert.ok(!v.ok && v.rejected.reason.includes("montant"));
   });
@@ -76,7 +89,7 @@ describe("acceptClaim", () => {
   });
 
   it("marque le cas plus sûr où le nom figure dans la citation", () => {
-    const v = acceptClaim(claim({ feeEur: null, sentence: 1 }), ARTICLE);
+    const v = acceptClaim(claim({ feeText: null, sentence: 1 }), ARTICLE);
     assert.ok(v.ok);
     assert.equal(v.claim.playerInQuote, true);
   });
@@ -98,7 +111,7 @@ describe("acceptClaim", () => {
 
   it("accepte une déclaration sans montant", () => {
     // Un club qui se positionne fait vivre une piste même sans chiffre.
-    const v = acceptClaim(claim({ feeEur: null, sentence: 1, feeKind: "inconnu" }), ARTICLE);
+    const v = acceptClaim(claim({ feeText: null, sentence: 1, feeKind: "inconnu" }), ARTICLE);
     assert.ok(v.ok);
     assert.equal(v.claim.feeEur, null);
     assert.equal(v.claim.feeLabel, null);
@@ -136,6 +149,10 @@ describe("OLLAMA_FORMAT", () => {
   it("ferme les vocabulaires que le modèle pourrait inventer", () => {
     const item = OLLAMA_FORMAT.properties.claims.items.properties;
     assert.ok(item.feeKind.enum.includes("pret_avec_option"));
+    // `null` est un type légal pour le montant : sans issue pour dire « aucun
+    // montant », un décodeur contraint en fabrique un — c'est ce qui a donné
+    // 100 % de rejet au premier passage réel.
+    assert.ok(item.feeText.type.includes("null"));
     assert.ok(item.stance.enum.includes("dementi"));
     // `sentence` est un entier, pas la citation : c'est ce qui économise une
     // quarantaine de tokens par déclaration sur un CPU à 3 tokens/s.

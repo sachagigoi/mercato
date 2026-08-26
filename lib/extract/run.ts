@@ -19,6 +19,15 @@ export type ArticleOutcome = {
   rejected: Rejected[];
   /** Durée de l'appel au modèle. Le chiffre qui dit si la cadence tient. */
   ms: number;
+  /**
+   * Sortie brute du modèle, et phrases telles qu'elles lui ont été soumises.
+   *
+   * Sans ça, un rejet ne dit pas *pourquoi* le modèle s'est trompé, et on
+   * corrige à l'aveugle. Le premier passage réel s'est soldé par 100 % de
+   * rejet sans qu'on puisse voir ce qu'il avait répondu.
+   */
+  raw: string;
+  sentences: readonly string[];
 };
 
 export type RunReport = {
@@ -94,7 +103,7 @@ export async function runSource(
       const outcome: ArticleOutcome = {
         article,
         skipped: gate.reason === "ok" ? null : gate.reason,
-        claims: [], rejected: [], ms: 0,
+        claims: [], rejected: [], ms: 0, raw: "", sentences: gate.sentences,
       };
       report.outcomes.push(outcome);
       options.onArticle?.(outcome);
@@ -103,8 +112,9 @@ export async function runSource(
 
     const started = Date.now();
     let raw: unknown[] = [];
+    let rawText = "";
     try {
-      ({ claims: raw } = await extractor.extract(gate.sentences));
+      ({ claims: raw, raw: rawText } = await extractor.extract(gate.sentences));
       report.extracted += 1;
     } catch (cause) {
       if (report.errors.length < MAX_REPORTED_ERRORS) {
@@ -136,7 +146,9 @@ export async function runSource(
     report.claims += claims.length;
     report.rejected += rejected.length;
 
-    const outcome: ArticleOutcome = { article, skipped: null, claims, rejected, ms };
+    const outcome: ArticleOutcome = {
+      article, skipped: null, claims, rejected, ms, raw: rawText, sentences: gate.sentences,
+    };
     report.outcomes.push(outcome);
     options.onArticle?.(outcome);
   }

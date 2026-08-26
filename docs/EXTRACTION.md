@@ -58,6 +58,17 @@ mode sec : rien ne sera écrit
 **C'est ce qu'il faut regarder en premier.** Pas la vitesse : la justesse des
 montants et des clubs.
 
+### Quand une extraction est rejetée
+
+```bash
+npm run extract -- --dry-run --verbose --limit 3
+```
+
+`--verbose` affiche ce que le modèle a répondu et les phrases qu'il a lues. Sans
+lui on sait qu'une extraction a échoué, mais pas pourquoi — et on corrige à
+l'aveugle. C'est ce qui manquait au premier passage réel, qui a rejeté 100 % des
+extractions sans qu'on puisse voir la sortie du modèle.
+
 ## 3. Les trois chiffres du bas
 
 ```
@@ -75,6 +86,14 @@ montants et des clubs.
 
 Un rejet n'est pas un incident : c'est le garde-fou qui fait son travail. Ce
 qui doit inquiéter, c'est un taux **durablement** au-dessus de 30 %.
+
+> **Le premier passage réel a rejeté 100 %.** Deux causes, toutes deux de
+> conception. Le modèle devait rendre un montant *en euros*, donc multiplier
+> 100 par un million — ce qu'un 7B rate volontiers, alors qu'un parseur testé
+> attendait à côté. Il recopie désormais le montant tel quel et le code le
+> convertit. Et le schéma n'offrait aucune façon légale de dire « aucun
+> montant » : un décodeur contraint en fabrique alors un. `null` est maintenant
+> un type valide, et la consigne dit que l'absence de montant est le cas normal.
 
 ## 4. Comparer deux modèles
 

@@ -31,10 +31,19 @@ export const RawClaimSchema = z.object({
   player: z.string().min(2).max(80),
   fromClub: z.string().max(80).nullish(),
   toClub: z.string().max(80).nullish(),
-  feeEur: z.number().nonnegative().nullish(),
+  /**
+   * Le montant **tel qu'écrit dans l'article** : « 100 M€ », « 9,3 M€ »,
+   * « 18 millions d'euros ». Surtout pas une valeur convertie.
+   *
+   * Première version demandait des euros, donc une multiplication par un
+   * million — exactement ce qu'un modèle de 7 milliards de paramètres fait le
+   * plus mal, alors qu'un parseur testé existait déjà à côté. Le modèle
+   * désigne, le code calcule : la même règle que pour la citation.
+   */
+  feeText: z.string().max(40).nullish(),
   feeKind: z.enum(FEE_KINDS).default("inconnu"),
   qualifier: z.enum(QUALIFIERS).default("exact"),
-  bonusEur: z.number().nonnegative().nullish(),
+  bonusText: z.string().max(40).nullish(),
   stance: z.enum(STANCES).default("rumeur"),
   /** Indice de la phrase d'où sort l'information. Pas la phrase : son numéro. */
   sentence: z.number().int().nonnegative(),
@@ -61,10 +70,12 @@ export const OLLAMA_FORMAT = {
           player: { type: "string" },
           fromClub: { type: "string" },
           toClub: { type: "string" },
-          feeEur: { type: "number" },
+          // `null` explicitement autorisé : sans issue légale pour dire
+          // « aucun montant », un décodeur contraint en fabrique un.
+          feeText: { type: ["string", "null"] },
           feeKind: { type: "string", enum: FEE_KINDS },
           qualifier: { type: "string", enum: QUALIFIERS },
-          bonusEur: { type: "number" },
+          bonusText: { type: ["string", "null"] },
           stance: { type: "string", enum: STANCES },
           sentence: { type: "integer" },
         },
@@ -132,14 +143,15 @@ export function acceptClaim(raw: unknown, sentences: readonly string[]): Verdict
   // d'être pondérée plus prudemment qu'une brève monosujet.
   const playerInQuote = normalized(quote).includes(normalized(lastName));
 
-  const feeEur = c.feeEur ?? null;
-  if (feeEur !== null) {
-    // Le montant doit être retrouvable dans la phrase désignée. C'est le
-    // contrôle qui attrape l'hallucination la plus coûteuse : un chiffre
-    // plausible, bien formé, et absent de l'article.
-    const found = findAmounts(quote).some((a) => a.eur === feeEur);
-    if (!found) return reject("montant introuvable dans la phrase citée", raw);
-  }
+  // Le montant recopié doit se retrouver dans la phrase désignée, et être
+  // lisible par le parseur. C'est le contrôle qui attrape l'hallucination la
+  // plus coûteuse : un chiffre plausible, bien formé, et absent de l'article.
+  const fee = amountFrom(c.feeText, quote);
+  if (fee === "absent") return reject("montant introuvable dans la phrase citée", raw);
+  if (fee === "illisible") return reject(`montant illisible : ${c.feeText}`, raw);
+
+  const bonus = amountFrom(c.bonusText, quote);
+  const bonusEur = typeof bonus === "number" ? bonus : null;
 
   return {
     ok: true,
@@ -149,11 +161,11 @@ export function acceptClaim(raw: unknown, sentences: readonly string[]): Verdict
       toClubRaw: c.toClub?.trim() || null,
       fromClub: resolveLigue1Club(c.fromClub),
       toClub: resolveLigue1Club(c.toClub),
-      feeEur,
-      feeLabel: feeEur === null ? null : formatFee(feeEur),
+      feeEur: typeof fee === "number" ? fee : null,
+      feeLabel: typeof fee === "number" ? formatFee(fee) : null,
       feeKind: c.feeKind,
       qualifier: c.qualifier,
-      bonusEur: c.bonusEur ?? null,
+      bonusEur,
       stance: c.stance,
       quote,
       playerInQuote,
@@ -163,6 +175,24 @@ export function acceptClaim(raw: unknown, sentences: readonly string[]): Verdict
 
 const normalized = (s: string) =>
   s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+/** Espaces fine et insécable comprises : « 100 M€ » s'écrit de plusieurs façons. */
+const loose = (s: string) => normalized(s).replace(/[\s\u202f\u00a0]+/g, "");
+
+/**
+ * Montant recopié -> euros, sous condition qu'il vienne bien de la phrase.
+ *
+ * Trois issues, distinctes exprès : pas de montant annoncé, montant annoncé
+ * mais absent du texte (l'hallucination qu'on traque), et montant présent mais
+ * que le parseur ne sait pas lire (un défaut de notre côté, pas du modèle).
+ */
+function amountFrom(text: string | null | undefined, quote: string): number | null | "absent" | "illisible" {
+  const value = text?.trim();
+  if (!value) return null;
+  if (!loose(quote).includes(loose(value))) return "absent";
+  const [amount] = findAmounts(value);
+  return amount ? amount.eur : "illisible";
+}
 
 /**
  * Une déclaration est-elle dans le périmètre du produit ?

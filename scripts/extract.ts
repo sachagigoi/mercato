@@ -6,7 +6,12 @@
  * et le jeton de l'endpoint d'ingestion, quand on branchera l'envoi.
  *
  *   node --experimental-strip-types scripts/extract.ts --dry-run
+ *   node --experimental-strip-types scripts/extract.ts --dry-run --verbose
  *   node --experimental-strip-types scripts/extract.ts --limit 5 --out claims.jsonl
+ *
+ * `--verbose` montre ce que le modèle a répondu et les phrases qu'il a lues.
+ * C'est le mode à utiliser dès qu'une extraction est rejetée : sans lui, on
+ * sait qu'elle a échoué mais pas pourquoi.
  *
  * `--dry-run` n'écrit rien et affiche ce que le modèle a produit : c'est le
  * mode à utiliser tant qu'on mesure la précision. Rien ne part vers la base
@@ -48,7 +53,7 @@ function loadSeen(): Set<string> {
 const euros = (n: number | null) =>
   n === null ? "—" : new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
 
-function show(o: ArticleOutcome) {
+function show(o: ArticleOutcome, verbose: boolean) {
   if (o.skipped) {
     console.log(`  ⨯ ${o.skipped.padEnd(13)} ${o.article.title}`);
     return;
@@ -60,11 +65,26 @@ function show(o: ArticleOutcome) {
     console.log(`        ${euros(c.feeEur)} · ${c.feeKind} · ${c.stance}${c.playerInQuote ? "" : " · nom hors citation"}`);
     console.log(`        « ${c.quote.slice(0, 110)}${c.quote.length > 110 ? "…" : ""} »`);
   }
-  for (const r of o.rejected) console.log(`      ✗ rejeté : ${r.reason}`);
+  for (const r of o.rejected) {
+    console.log(`      ✗ rejeté : ${r.reason}`);
+    // Le rejet seul ne dit pas POURQUOI le modèle s'est trompé. Sans ce que
+    // le modèle a répondu et sans les phrases qu'il a lues, on corrige à
+    // l'aveugle — c'est ce qui manquait au premier passage réel.
+    if (verbose) console.log(`        reçu : ${JSON.stringify(r.raw)}`);
+  }
+
+  if (verbose) {
+    console.log("        — phrases soumises —");
+    o.sentences.forEach((s, i) => console.log(`        [${i}] ${s.slice(0, 100)}`));
+    if (o.claims.length === 0 && o.rejected.length === 0) {
+      console.log(`        — réponse brute — ${o.raw.slice(0, 400)}`);
+    }
+  }
 }
 
 async function main() {
   const dryRun = flag("dry-run");
+  const verbose = flag("verbose");
   const limit = Number(arg("limit", "20"));
   const out = arg("out");
 
@@ -75,7 +95,9 @@ async function main() {
   console.log(`source ${source.name} · modèle ${extractor.model} · ${seen.size} articles déjà vus`);
   if (dryRun) console.log("mode sec : rien ne sera écrit\n");
 
-  const report = await runSource(source, extractor, { seen, limit, onArticle: show });
+  const report = await runSource(source, extractor, {
+    seen, limit, onArticle: (o) => show(o, verbose),
+  });
 
   const seconds = report.msTotal / 1000;
   console.log(`

@@ -99,7 +99,7 @@ describe("runSource", () => {
     // Le modèle désigne la phrase du montant sur la brève Bouaddi -> City.
     const extractor = fakeExtractor((sentences) => {
       const i = sentences.findIndex((s) => /100 M€|100 millions/.test(s));
-      return i < 0 ? [] : [{ player: "Bouaddi", fromClub: "Lille", toClub: "Manchester City", feeEur: 100_000_000, feeKind: "transfert", stance: "officiel", sentence: i }];
+      return i < 0 ? [] : [{ player: "Bouaddi", fromClub: "Lille", toClub: "Manchester City", feeText: "100 M€", feeKind: "transfert", stance: "officiel", sentence: i }];
     });
 
     const report = await runSource(createMaxifoot(http), extractor, { sleep: noSleep });
@@ -122,7 +122,7 @@ describe("runSource", () => {
       // Les deux portent un club de L1 : sans lui elles sortiraient du
       // périmètre, et le test mesurerait autre chose que le rejet.
       return [
-        { player, fromClub: "PSG", feeEur: 12_345_678, stance: "rumeur", sentence: 0 },
+        { player, fromClub: "PSG", feeText: "12,3 M€", stance: "rumeur", sentence: 0 },
         { player, fromClub: "PSG", stance: "rumeur", sentence: 0 },
       ];
     });
@@ -179,11 +179,18 @@ describe("runSource", () => {
 
 describe("SYSTEM_PROMPT", () => {
   it("reste court et ne redit pas le schéma", () => {
-    // Il est payé en prefill à chaque article tant que son préfixe change, et
-    // `format` contraint déjà la sortie : le décrire en prose ne ferait que
-    // coûter des tokens sur un CPU qui en produit quatorze par seconde.
-    assert.ok(SYSTEM_PROMPT.length < 600, `${SYSTEM_PROMPT.length} caractères`);
+    // Son préfixe est mis en cache tant que le modèle reste chargé, donc sa
+    // longueur se paie une fois par chargement et non par article. Le plafond
+    // n'en reste pas moins utile : il tient à distance la tentation de
+    // répondre à chaque erreur d'extraction par un paragraphe de plus.
+    //
+    // Il est passé de 600 à 900 pour une raison mesurée : le premier passage
+    // réel a rejeté 100 % des extractions, le modèle inventant un montant sur
+    // des brèves qui n'en portaient aucun. Lui dire explicitement que
+    // l'absence de montant est le cas NORMAL valait les tokens.
+    assert.ok(SYSTEM_PROMPT.length < 900, `${SYSTEM_PROMPT.length} caractères`);
     assert.ok(!SYSTEM_PROMPT.includes("{"), "schéma répété en prose");
-    assert.match(SYSTEM_PROMPT, /N'invente jamais de montant/);
+    assert.match(SYSTEM_PROMPT, /RECOPIÉ MOT POUR MOT/);
+    assert.match(SYSTEM_PROMPT, /n'est pas un échec/);
   });
 });

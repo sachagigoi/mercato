@@ -15,7 +15,7 @@ export interface Extractor {
   readonly promptVersion: string;
 }
 
-export const PROMPT_VERSION = "1";
+export const PROMPT_VERSION = "2";
 
 /**
  * Consigne système, volontairement courte et **strictement identique** d'un
@@ -30,10 +30,17 @@ export const PROMPT_VERSION = "1";
 export const SYSTEM_PROMPT = [
   "Tu extrais les informations de transfert d'une brève de football française.",
   "On te donne les phrases de l'article, numérotées à partir de 0.",
-  "Rends une entrée par transfert évoqué.",
-  "`sentence` est le NUMÉRO de la phrase d'où vient l'information.",
-  "`feeEur` est le montant en euros, et UNIQUEMENT s'il est écrit dans l'article.",
-  "N'invente jamais de montant : sans chiffre écrit, omets `feeEur`.",
+  "Rends une entrée par transfert évoqué, ou une liste vide s'il n'y en a aucun.",
+  "",
+  "`sentence` : le NUMÉRO de la phrase d'où vient l'information.",
+  "`feeText` : le montant RECOPIÉ MOT POUR MOT de cette phrase — « 100 M€ »,",
+  "  « 9,3 M€ », « 18 millions d'euros ». Ne convertis rien, ne calcule rien.",
+  "  Si la phrase ne contient aucun montant, mets `feeText` à null.",
+  "",
+  "La plupart des brèves n'annoncent AUCUN montant. C'est le cas normal :",
+  "`feeText` à null n'est pas un échec, c'est la bonne réponse.",
+  "Un montant que tu ne peux pas recopier depuis la phrase est un montant",
+  "qui n'existe pas.",
 ].join("\n");
 
 export const buildUserPrompt = (sentences: readonly string[]) =>
