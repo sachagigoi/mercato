@@ -10,3 +10,7 @@ build/
 next-env.d.ts
 __pycache__/
 .venv/
+
+# Journal des articles déjà extraits (mini PC)
+.mercato-seen.json
+*.jsonl
