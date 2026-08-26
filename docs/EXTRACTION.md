@@ -22,10 +22,17 @@ sudo systemctl edit ollama
 sudo systemctl restart ollama
 ```
 
-Le dépôt, ensuite :
+Le dépôt, ensuite. **Node 22.6 minimum** — le worker est en TypeScript exécuté
+directement, ce qui demande `--experimental-strip-types` :
 
 ```bash
+node --version          # doit afficher v22.6 ou plus
 git clone https://github.com/sachagigoi/mercato.git && cd mercato
+
+# Tant que la PR n'est pas mergée, le worker vit sur sa branche.
+# `git clone` ramène la branche par défaut, qui ne le contient pas.
+git checkout claude/maxifoot-claims-pipeline
+
 npm ci
 ```
 
