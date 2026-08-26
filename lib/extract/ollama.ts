@@ -15,7 +15,7 @@ export interface Extractor {
   readonly promptVersion: string;
 }
 
-export const PROMPT_VERSION = "3";
+export const PROMPT_VERSION = "4";
 
 /**
  * Consigne système, volontairement courte et **strictement identique** d'un
@@ -32,7 +32,10 @@ export const SYSTEM_PROMPT = [
   "On te donne les phrases de l'article, numérotées à partir de 0.",
   "Rends une entrée par transfert évoqué, ou une liste vide s'il n'y en a aucun.",
   "",
-  "sentence : le NUMÉRO de la phrase d'où vient l'information.",
+  "sentence : le NUMÉRO de la phrase qui énonce le transfert. Préfère une",
+  "           phrase du corps plutôt que le titre.",
+  "feeSentence : le NUMÉRO de la phrase qui contient le montant, si ce n'est",
+  "           pas la même. null sinon.",
   "player   : le nom du joueur.",
   "fromClub : le club qu'il quitte. null si l'article ne le dit pas.",
   "toClub   : le club où il arrive. null si l'article ne le dit pas.",

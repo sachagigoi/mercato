@@ -65,11 +65,34 @@ describe("acceptClaim", () => {
     assert.ok(!v.ok && v.rejected.reason.includes("montant"));
   });
 
-  it("rejette un montant pris dans une autre phrase que celle citée", () => {
+  it("rejette un montant pris dans une autre phrase que celle désignée", () => {
     // Le montant est bien dans l'article, mais pas là où le modèle le dit :
     // vérifier au niveau de l'article laisserait passer ce recollage.
-    const v = acceptClaim(claim({ sentence: 3 }), ARTICLE);
+    const v = acceptClaim(claim({ sentence: 3, feeSentence: 3 }), ARTICLE);
     assert.equal(v.ok, false);
+  });
+
+  it("accepte un montant qui vit dans une autre phrase que le transfert", () => {
+    // Le cas réel qui a fait évoluer le schéma : « les représentants disposent
+    // d'un accord avec l'AS Roma » et « l'OL réclame 40 M€ » sont deux phrases.
+    // Un seul indice rejetait une extraction entièrement juste.
+    const v = acceptClaim(claim({ sentence: 1, feeSentence: 2 }), ARTICLE);
+    assert.ok(v.ok);
+    assert.equal(v.claim.feeEur, 70_000_000);
+    assert.equal(v.claim.quote, ARTICLE[1], "la citation doit rester celle du transfert");
+    assert.equal(v.claim.feeQuote, ARTICLE[2], "le montant doit citer sa propre phrase");
+  });
+
+  it("rejette une phrase de montant hors du texte", () => {
+    const v = acceptClaim(claim({ sentence: 1, feeSentence: 99 }), ARTICLE);
+    assert.equal(v.ok, false);
+    assert.ok(!v.ok && v.rejected.reason.includes("montant"));
+  });
+
+  it("retombe sur la phrase du transfert quand feeSentence est absent", () => {
+    const v = acceptClaim(claim({ feeSentence: null }), ARTICLE);
+    assert.ok(v.ok);
+    assert.equal(v.claim.feeQuote, ARTICLE[2]);
   });
 
   it("rejette un joueur absent de l'article", () => {

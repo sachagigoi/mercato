@@ -45,8 +45,18 @@ export const RawClaimSchema = z.object({
   qualifier: z.enum(QUALIFIERS).default("exact"),
   bonusText: z.string().max(40).nullish(),
   stance: z.enum(STANCES).default("rumeur"),
-  /** Indice de la phrase d'où sort l'information. Pas la phrase : son numéro. */
+  /** Indice de la phrase qui énonce le transfert. Pas la phrase : son numéro. */
   sentence: z.number().int().nonnegative(),
+  /**
+   * Indice de la phrase qui porte le montant, quand ce n'est pas la même.
+   *
+   * Un article réel a fait tomber la version à un seul indice : « les
+   * représentants disposent d'un accord avec l'AS Roma » et « l'OL réclame
+   * 40 M€ » sont deux phrases distinctes. Le modèle désignait la première,
+   * le montant vivait dans la seconde, et le garde-fou rejetait une
+   * extraction pourtant entièrement juste.
+   */
+  feeSentence: z.number().int().nonnegative().nullish(),
 });
 
 export type RawClaim = z.input<typeof RawClaimSchema>;
@@ -83,8 +93,9 @@ export const OLLAMA_FORMAT = {
           bonusText: { type: ["string", "null"] },
           stance: { type: "string", enum: STANCES },
           sentence: { type: "integer" },
+          feeSentence: { type: ["integer", "null"] },
         },
-        required: ["player", "fromClub", "toClub", "feeText", "feeKind", "stance", "sentence"],
+        required: ["player", "fromClub", "toClub", "feeText", "feeSentence", "feeKind", "stance", "sentence"],
       },
     },
   },
@@ -105,6 +116,8 @@ export type AcceptedClaim = {
   stance: (typeof STANCES)[number];
   /** Phrase reprise telle quelle du texte, par indice : exacte par construction. */
   quote: string;
+  /** Phrase qui porte le montant, quand il y en a un. Souvent la même. */
+  feeQuote: string | null;
   /** Le joueur est-il nommé dans la citation même ? Signal de confiance. */
   playerInQuote: boolean;
 };
@@ -148,10 +161,15 @@ export function acceptClaim(raw: unknown, sentences: readonly string[]): Verdict
   // d'être pondérée plus prudemment qu'une brève monosujet.
   const playerInQuote = normalized(quote).includes(normalized(lastName));
 
-  // Le montant recopié doit se retrouver dans la phrase désignée, et être
-  // lisible par le parseur. C'est le contrôle qui attrape l'hallucination la
-  // plus coûteuse : un chiffre plausible, bien formé, et absent de l'article.
-  const fee = amountFrom(c.feeText, quote);
+  // Le montant est vérifié dans SA phrase, qui n'est pas forcément celle qui
+  // énonce le transfert. Le contrôle reste au niveau de la phrase — c'est lui
+  // qui attrape l'hallucination coûteuse, un chiffre plausible et absent — mais
+  // il porte sur la phrase que le modèle désigne pour le montant.
+  const feeQuote = sentences[c.feeSentence ?? c.sentence];
+  if (c.feeText && feeQuote === undefined)
+    return reject("phrase du montant hors du texte", raw);
+
+  const fee = amountFrom(c.feeText, feeQuote ?? "");
   if (fee === "absent") return reject("montant introuvable dans la phrase citée", raw);
   if (fee === "illisible") return reject(`montant illisible : ${c.feeText}`, raw);
 
@@ -173,6 +191,7 @@ export function acceptClaim(raw: unknown, sentences: readonly string[]): Verdict
       bonusEur,
       stance: c.stance,
       quote,
+      feeQuote: typeof fee === "number" ? (feeQuote ?? null) : null,
       playerInQuote,
     },
   };

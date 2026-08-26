@@ -50,6 +50,8 @@ function loadSeen(): Set<string> {
   }
 }
 
+const cut = (s: string, n = 110) => (s.length > n ? `${s.slice(0, n)}…` : s);
+
 const euros = (n: number | null) =>
   n === null ? "—" : new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
 
@@ -63,7 +65,11 @@ function show(o: ArticleOutcome, verbose: boolean) {
     const route = `${c.fromClubRaw ?? "?"} → ${c.toClubRaw ?? "?"}`;
     console.log(`      ✓ ${c.player} · ${route}`);
     console.log(`        ${euros(c.feeEur)} · ${c.feeKind} · ${c.stance}${c.playerInQuote ? "" : " · nom hors citation"}`);
-    console.log(`        « ${c.quote.slice(0, 110)}${c.quote.length > 110 ? "…" : ""} »`);
+    console.log(`        « ${cut(c.quote)} »`);
+    // Le montant vit souvent dans une autre phrase que le transfert. La
+    // montrer permet de vérifier d'un coup d'œil que le chiffre vient bien
+    // de là où le modèle le dit.
+    if (c.feeQuote && c.feeQuote !== c.quote) console.log(`        montant « ${cut(c.feeQuote)} »`);
   }
   for (const r of o.rejected) {
     console.log(`      ✗ rejeté : ${r.reason}`);

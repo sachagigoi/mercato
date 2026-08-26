@@ -87,13 +87,26 @@ extractions sans qu'on puisse voir la sortie du modèle.
 Un rejet n'est pas un incident : c'est le garde-fou qui fait son travail. Ce
 qui doit inquiéter, c'est un taux **durablement** au-dessus de 30 %.
 
-> **Le premier passage réel a rejeté 100 %.** Deux causes, toutes deux de
+> **Trois passages réels ont fait évoluer le schéma**, chacun sur un défaut
+> que le papier n'aurait pas montré.
+>
+> **Le premier a rejeté 100 %.** Deux causes, toutes deux de
 > conception. Le modèle devait rendre un montant *en euros*, donc multiplier
 > 100 par un million — ce qu'un 7B rate volontiers, alors qu'un parseur testé
 > attendait à côté. Il recopie désormais le montant tel quel et le code le
 > convertit. Et le schéma n'offrait aucune façon légale de dire « aucun
 > montant » : un décodeur contraint en fabrique alors un. `null` est maintenant
 > un type valide, et la consigne dit que l'absence de montant est le cas normal.
+>
+> **Le deuxième ne rendait aucun club**, et une posture tirée au hasard.
+> `fromClub`, `toClub` et `stance` figuraient au schéma mais nulle part dans la
+> consigne : un décodeur contraint omet ce qu'on ne lui demande pas, et choisit
+> au hasard dans une énumération qu'on ne lui explique pas.
+>
+> **Le troisième a rejeté une extraction juste.** « Les représentants disposent
+> d'un accord avec l'AS Roma » et « l'OL réclame 40 M€ » sont deux phrases
+> distinctes ; le schéma n'autorisait qu'un seul indice. `feeSentence` permet
+> désormais au montant de citer sa propre phrase, sans affaiblir le contrôle.
 
 ## 4. Comparer deux modèles
 
