@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 
 import type { BytesFetcher } from "../articles.ts";
 import { createMaxifoot } from "../sources/maxifoot.ts";
+import { OLLAMA_FORMAT, STANCES } from "./claims.ts";
 import { buildUserPrompt, SYSTEM_PROMPT, type Extractor } from "./ollama.ts";
 import { rejectionRate, runSource } from "./run.ts";
 
@@ -178,19 +179,39 @@ describe("runSource", () => {
 });
 
 describe("SYSTEM_PROMPT", () => {
-  it("reste court et ne redit pas le schéma", () => {
-    // Son préfixe est mis en cache tant que le modèle reste chargé, donc sa
-    // longueur se paie une fois par chargement et non par article. Le plafond
-    // n'en reste pas moins utile : il tient à distance la tentation de
-    // répondre à chaque erreur d'extraction par un paragraphe de plus.
+  it("documente chaque champ que le modèle doit remplir", () => {
+    // Le test qui manquait. Deux passages réels ont échoué pour la même
+    // raison : un champ présent au schéma mais absent de la consigne. Le
+    // modèle rendait alors des déclarations sans aucun club, et une posture
+    // tirée au hasard dans une liste de mots français qu'on ne lui avait
+    // jamais expliqués.
     //
-    // Il est passé de 600 à 900 pour une raison mesurée : le premier passage
-    // réel a rejeté 100 % des extractions, le modèle inventant un montant sur
-    // des brèves qui n'en portaient aucun. Lui dire explicitement que
-    // l'absence de montant est le cas NORMAL valait les tokens.
-    assert.ok(SYSTEM_PROMPT.length < 900, `${SYSTEM_PROMPT.length} caractères`);
+    // Contrôler la longueur du prompt protégeait la mauvaise chose : son
+    // préfixe est mis en cache tant que le modèle reste chargé, donc ces
+    // tokens se paient une fois par chargement, pas par article. Ce qui coûte
+    // cher, c'est un champ non documenté.
+    const required = OLLAMA_FORMAT.properties.claims.items.required;
+    for (const field of required) {
+      assert.ok(SYSTEM_PROMPT.includes(field), `champ « ${field} » non documenté`);
+    }
+  });
+
+  it("explique chaque valeur de posture", () => {
+    // Une énumération sans glose est un tirage au sort : le modèle a répondu
+    // « dementi » sur un transfert officiel tant que les valeurs n'ont pas
+    // été définies.
+    for (const stance of STANCES) {
+      assert.ok(SYSTEM_PROMPT.includes(stance), `posture « ${stance} » non expliquée`);
+    }
+  });
+
+  it("ne redit pas le schéma en JSON", () => {
+    // `format` le contraint déjà au décodage ; le répéter en prose ne ferait
+    // que coûter des tokens sans rien garantir de plus.
     assert.ok(!SYSTEM_PROMPT.includes("{"), "schéma répété en prose");
     assert.match(SYSTEM_PROMPT, /RECOPIÉ MOT POUR MOT/);
-    assert.match(SYSTEM_PROMPT, /n'est pas un échec/);
+    // L'absence de montant doit être présentée comme le cas normal : sans ça,
+    // un décodeur contraint en fabrique un plutôt que de rendre null.
+    assert.match(SYSTEM_PROMPT, /pas un échec/);
   });
 });

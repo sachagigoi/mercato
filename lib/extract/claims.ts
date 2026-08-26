@@ -68,8 +68,13 @@ export const OLLAMA_FORMAT = {
         type: "object",
         properties: {
           player: { type: "string" },
-          fromClub: { type: "string" },
-          toClub: { type: "string" },
+          // `null` légal, et pourtant **exigés** : laissés optionnels, un
+          // décodeur contraint les omet purement et simplement. Le premier
+          // passage a rendu des déclarations sans aucun club, donc toutes
+          // hors périmètre. Obliger le modèle à trancher — un nom ou null —
+          // vaut mieux que lui laisser le silence.
+          fromClub: { type: ["string", "null"] },
+          toClub: { type: ["string", "null"] },
           // `null` explicitement autorisé : sans issue légale pour dire
           // « aucun montant », un décodeur contraint en fabrique un.
           feeText: { type: ["string", "null"] },
@@ -79,7 +84,7 @@ export const OLLAMA_FORMAT = {
           stance: { type: "string", enum: STANCES },
           sentence: { type: "integer" },
         },
-        required: ["player", "stance", "sentence"],
+        required: ["player", "fromClub", "toClub", "feeText", "feeKind", "stance", "sentence"],
       },
     },
   },

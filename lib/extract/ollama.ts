@@ -15,7 +15,7 @@ export interface Extractor {
   readonly promptVersion: string;
 }
 
-export const PROMPT_VERSION = "2";
+export const PROMPT_VERSION = "3";
 
 /**
  * Consigne système, volontairement courte et **strictement identique** d'un
@@ -32,15 +32,24 @@ export const SYSTEM_PROMPT = [
   "On te donne les phrases de l'article, numérotées à partir de 0.",
   "Rends une entrée par transfert évoqué, ou une liste vide s'il n'y en a aucun.",
   "",
-  "`sentence` : le NUMÉRO de la phrase d'où vient l'information.",
-  "`feeText` : le montant RECOPIÉ MOT POUR MOT de cette phrase — « 100 M€ »,",
-  "  « 9,3 M€ », « 18 millions d'euros ». Ne convertis rien, ne calcule rien.",
-  "  Si la phrase ne contient aucun montant, mets `feeText` à null.",
+  "sentence : le NUMÉRO de la phrase d'où vient l'information.",
+  "player   : le nom du joueur.",
+  "fromClub : le club qu'il quitte. null si l'article ne le dit pas.",
+  "toClub   : le club où il arrive. null si l'article ne le dit pas.",
+  "feeText  : le montant RECOPIÉ MOT POUR MOT de cette phrase — « 100 M€ »,",
+  "           « 18 millions d'euros ». Ne convertis rien, ne calcule rien.",
+  "           null si la phrase ne contient aucun montant.",
+  "qualifier: exact, ou environ / minimum / maximum si l'article le nuance.",
+  "feeKind  : transfert, pret, pret_avec_option, clause, libre, inconnu.",
+  "stance   : où en est le dossier —",
+  "           rumeur      un intérêt est évoqué",
+  "           discussions des négociations sont en cours",
+  "           accord      un accord est trouvé, rien n'est encore signé",
+  "           officiel    le transfert est annoncé par le club",
+  "           dementi     l'article affirme que l'information est FAUSSE",
   "",
-  "La plupart des brèves n'annoncent AUCUN montant. C'est le cas normal :",
-  "`feeText` à null n'est pas un échec, c'est la bonne réponse.",
-  "Un montant que tu ne peux pas recopier depuis la phrase est un montant",
-  "qui n'existe pas.",
+  "La plupart des brèves n'annoncent aucun montant : feeText à null est le cas",
+  "normal, pas un échec.",
 ].join("\n");
 
 export const buildUserPrompt = (sentences: readonly string[]) =>
