@@ -3,12 +3,14 @@ import { NextResponse } from "next/server";
 
 import { ingest } from "@/lib/ingest";
 import { resolveMarketValues } from "@/lib/market-value";
+import { reconcile } from "@/lib/reconcile";
 import { resolveMedia } from "@/lib/resolve-media";
 import { createApiFootballHttp } from "@/lib/sources/apifootball";
 import { createHtmlFetcher, fetchRumours } from "@/lib/sources/transfermarkt";
 import {
   createMarketValueStore,
   createMediaResolutionStores,
+  createReconcileStore,
   createSupabaseStores,
 } from "@/lib/supabase/store";
 
@@ -44,6 +46,14 @@ async function run(request: Request) {
     const raw = await fetchRumours();
     const ingestion = await ingest(raw, createSupabaseStores());
 
+    // Le rapprochement vient JUSTE après la moisson, et pas ailleurs : les
+    // rumeurs qui viennent d'entrer sont précisément celles que des
+    // déclarations attendaient. Une brève de presse arrive souvent avant que
+    // Transfermarkt ne publie la rumeur ; c'est ce passage-ci qui les réunit.
+    const matching = await reconcile(createReconcileStore(), {
+      create: (rows) => ingest(rows, createSupabaseStores()).then(() => undefined),
+    });
+
     // La résolution de visuels suit l'ingestion dans le même passage : la
     // moisson vient de remplir la file, autant la vider tout de suite plutôt
     // que d'attendre le cron suivant pour que les cartes aient leurs logos.
@@ -59,7 +69,7 @@ async function run(request: Request) {
       http: createHtmlFetcher(),
     });
 
-    return NextResponse.json({ ingestion, media, marketValues });
+    return NextResponse.json({ ingestion, matching, media, marketValues });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "Erreur inconnue";
     return NextResponse.json({ error: message }, { status: 500 });

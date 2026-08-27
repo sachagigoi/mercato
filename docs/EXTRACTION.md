@@ -264,12 +264,26 @@ l'article, le joueur, la route, le modèle et la version de consigne. Changer de
 modèle produit en revanche une ligne **de plus**, comparable à l'ancienne —
 c'est ce qui permettra de mesurer un changement de modèle sur du vrai corpus.
 
-## 7. Ce qui n'est pas encore branché
+## 7. Ce qui se passe après l'envoi
 
-Le **rapprochement** déclaration → piste. Les déclarations s'écrivent, mais
-`transfer_id` reste nul : rien n'apparaît encore sur les cartes du feed. C'est
-l'étape suivante, et elle mérite son propre passage — décider qu'un article
-parle de la rumeur déjà en base, ou d'une nouvelle, n'est pas un détail.
+Le **rapprochement** est branché (SPEC §13.7) et tourne côté Vercel, sans rien
+à faire sur le mini PC. La réponse de `/api/claims` le rapporte :
+
+```json
+{ "articles": 3, "declarations": 4, "outOfScope": 1,
+  "matching": { "pending": 4, "linked": 3, "enriched": 2, "created": 1, "deferred": 1 } }
+```
+
+| Chiffre | Ce qu'il dit |
+|---|---|
+| **linked** | Déclarations rattachées à une piste. |
+| **enriched** | Pistes qui ont reçu un montant qu'elles n'avaient pas — **le chiffre du produit**, celui qui fait apparaître une somme sur une carte. |
+| **created** | Pistes ouvertes par la presse, faute de rumeur Transfermarkt. |
+| **deferred** | Déclarations laissées en file : pas de destination nommée, ou un démenti. Elles seront reprises après chaque moisson, quand la rumeur aura paru. |
+
+Un `deferred` qui ne descend jamais sur plusieurs passages mérite un coup
+d'œil : c'est soit un joueur dont la rumeur ne paraît pas, soit un libellé de
+club que le rapprochement n'arrive pas à faire coïncider.
 
 ---
 

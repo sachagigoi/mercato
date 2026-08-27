@@ -297,7 +297,7 @@ create table public.declarations (
 | `model` et `prompt_version` **sur la déclaration**, pas sur l'article | L'article est un fait du monde, l'extraction un fait de notre pipeline. Rejouer un corpus avec un autre modèle ne doit pas réécrire la provenance. |
 | Les deux dans `claim_key` | Un second modèle produit une ligne **comparable**, pas un écrasement. Sans ça, aucun banc d'essai ne peut mesurer un changement de modèle sur de vrais articles. |
 | Le libellé brut **et** la clé résolue | Le brut permet de rejouer une résolution ratée. Le perdre rendrait toute correction du référentiel inapplicable au passé. |
-| `transfer_id` nul par défaut | Une déclaration existe indépendamment de ce qu'elle enrichit, et peut arriver **avant** la rumeur qui la concerne. Le rapprochement est une étape à part. |
+| `transfer_id` nul par défaut | Une déclaration existe indépendamment de ce qu'elle enrichit, et peut arriver **avant** la rumeur qui la concerne. Le rapprochement (§13.7) la rattache ensuite, à la réception puis après chaque moisson. |
 | `quote` obligatoire | Sans citation, une déclaration n'est qu'une affirmation. C'est ce champ qui autorise à afficher un montant sans demander qu'on nous croie. |
 
 Index : `declarations_pending_idx` (file du rapprochement, `where transfer_id is
@@ -356,6 +356,8 @@ lib/
   market-value.test.ts          # 7 tests, dont l'arrêt après trois échecs
   fixtures.ts                   # jeu de cas limites du banc de rendu
   declarations.ts               # point de passage unique vers declarations (§13)
+  reconcile.ts                  # rapprochement déclaration -> piste (§13.7)
+  reconcile.test.ts             # 21 tests, dont les deux erreurs qui ne se valent pas
   declarations.test.ts          # 11 tests, dont l'idempotence et la comparaison de modèles
   articles.ts                   # contrat commun à toutes les sources de presse
   referential.ts                # les 18 clubs de L1, alias de presse compris
@@ -1268,6 +1270,60 @@ sur la précision : pousser le modèle à remplir les clubs sans vérifier qu'il
 sont dans le texte échangerait un oubli contre une erreur d'attribution, ce qui
 serait un mauvais échange.
 
+### 13.7 Le rapprochement — de la déclaration à la carte
+
+C'est la pièce qui relie le pipeline au produit. Sans elle l'extraction peut
+être parfaite : `transfer_id` reste nul, et rien n'atteint le feed.
+
+Elle répond à une seule question, article par article : **parle-t-on d'une
+piste déjà connue, ou d'une nouvelle ?**
+
+```
+déclaration en attente
+   │
+   ├─ même joueur, même destination ────────→ c'est la même piste
+   ├─ même joueur, même origine, et une
+   │  destination inconnue d'un côté ───────→ la même piste, qui se précise
+   └─ sinon ─────────────────────────────────→ une autre piste
+                                                 │
+                          destination nommée ? ──┴── non → reste en file
+                                     │
+                                    oui → ingest() ouvre la piste
+```
+
+**Les deux erreurs ne se valent pas**, et tout le module penche d'un côté. Un
+doublon dans le feed se voit et se corrige ; un montant posé sur la mauvaise
+piste se lit comme un fait. Les clubs étrangers n'ayant pas de référentiel, ils
+se comparent par libellé normalisé — « Man City » et « Manchester City » ne se
+rejoindront pas, et c'est un doublon assumé plutôt qu'une fusion hasardeuse.
+
+| Décision | Pourquoi |
+|---|---|
+| **Le montant n'est posé que si la piste n'en a pas** | Une rumeur Transfermarkt arrive sans montant : c'est exactement le trou que la presse comble. Un transfert conclu, lui, porte le chiffre officiel, qu'une estimation de presse n'a pas à écraser. La condition vit dans la requête (`is('fee_value_eur', null)`), pas seulement dans la lecture : entre les deux, l'ingestion a pu passer. |
+| **Le lien est posé même quand rien ne change** | L'observation vaut d'être conservée : c'est elle qui permettra d'afficher « trois sources concordent ». |
+| **Créer passe par `ingest()`** | `lib/ingest.ts` reste le point d'entrée UNIQUE de `transfers`. La piste née de la presse subit donc la même validation, le même dédoublonnage, et entre dans la file des visuels comme les autres. |
+| **Pas de piste sans destination** | Une carte « Fofana → ? » n'apprend rien. La déclaration attend la rumeur Transfermarkt plutôt que d'ouvrir une piste borgne. |
+| **Pas de piste depuis un démenti** | Ce serait faire naître une rumeur d'un article qui affirme qu'elle est fausse. Un démenti enrichit une piste ; il n'en ouvre pas. |
+| **Clé naturelle sans la source** | `press:{joueur}:{destination}` — deux journaux qui rapportent le même mouvement produisent une piste, pas deux cartes. |
+
+Le score d'une piste née de la presse **encode la posture déclarée**, il ne la
+calcule pas : rumeur 40, discussions 55, accord 75, officiel 100. Ce n'est pas
+une probabilité, et le Rumourometer de Transfermarkt n'est jamais écrasé par
+cet encodage sur les pistes qui en ont un.
+
+**Deux points d'appel, pour deux latences.** Le rapprochement suit l'écriture
+dans `/api/claims` — une déclaration dont la piste existe déjà atteint la carte
+tout de suite — et il suit la moisson dans le cron : les rumeurs qui viennent
+d'entrer sont précisément celles que des déclarations attendaient. Une brève de
+presse paraît souvent avant que Transfermarkt ne publie la rumeur.
+
+La jointure s'appuie sur `transfers.player_normalized`, colonne **générée**
+depuis `player_name`. Un `ilike` sur le nom brut ignore la casse mais pas les
+accents, et raterait « Paixão » contre « Paixao » — exactement les noms que ce
+produit manipule. L'accord entre `public.normalize_name` (SQL) et
+`normalizeName` (TypeScript) a été vérifié sur les accents, apostrophes,
+traits d'union et espaces doublés avant d'y adosser la jointure.
+
 ### 13.6 État
 
 Livré et testé : le contrat de source (`lib/articles.ts`), la source Maxifoot,
@@ -1279,7 +1335,11 @@ l'endpoint `/api/claims`. Le mode d'emploi du mini PC est dans
 c'est volontaire : rien n'atterrit en base avant qu'on ait un taux de rejet
 regardable, mesuré sur de vrais articles.
 
-Reste à faire, dans cet ordre : le **rapprochement** déclaration → piste (qui
-remplira `transfer_id` et fera enfin apparaître le montant sur la carte), le
-banc d'essai sur articles étiquetés, puis les sources suivantes — chacune
-n'apportant qu'un parseur, le contrat étant déjà là.
+Le **rapprochement** (§13.7) est branché : les déclarations trouvent leur
+piste, ou en ouvrent une, et le montant de presse atteint la carte.
+
+Reste à faire : le banc d'essai sur articles étiquetés, puis les sources
+suivantes — chacune n'apportant qu'un parseur, le contrat étant déjà là. Et
+deux affinages que la première mesure en conditions réelles tranchera : les
+libellés de clubs étrangers, qui produisent aujourd'hui des doublons assumés,
+et la place de la posture déclarée dans le score affiché.

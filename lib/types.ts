@@ -215,6 +215,7 @@ export type Database = {
           nationality_code: string | null
           player_cutout: string | null
           player_name: string
+          player_normalized: string | null
           player_photo: string | null
           previous_probability: number | null
           probability_score: number | null

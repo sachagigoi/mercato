@@ -3,7 +3,13 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { publishDeclarations } from "@/lib/declarations";
-import { createDeclarationStore } from "@/lib/supabase/store";
+import { ingest } from "@/lib/ingest";
+import { reconcile } from "@/lib/reconcile";
+import {
+  createDeclarationStore,
+  createReconcileStore,
+  createSupabaseStores,
+} from "@/lib/supabase/store";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -56,7 +62,16 @@ export async function POST(request: Request) {
 
   try {
     const report = await publishDeclarations(body, createDeclarationStore());
-    return NextResponse.json(report);
+
+    // Le rapprochement suit l'écriture dans le même passage : une déclaration
+    // dont la piste existe déjà doit atteindre la carte tout de suite, pas au
+    // cron suivant. Ce qui n'a pas trouvé sa piste reste en file — le balayage
+    // qui suit chaque moisson le reprendra, quand la rumeur aura paru.
+    const matching = await reconcile(createReconcileStore(), {
+      create: (rows) => ingest(rows, createSupabaseStores()).then(() => undefined),
+    });
+
+    return NextResponse.json({ ...report, matching });
   } catch (cause) {
     // Un lot malformé est une erreur du client, pas du serveur : le distinguer
     // évite de faire retenter indéfiniment un worker qui envoie du mauvais
