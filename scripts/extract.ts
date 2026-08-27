@@ -87,6 +87,9 @@ function show(o: ArticleOutcome, verbose: boolean) {
   // il a rendu West Ham -> Aston Villa — vrai, mais l'angle marseillais est
   // passé à la trappe. Le distinguer d'un article muet oriente le correctif.
   if (o.outOfScope > 0) console.log(`      ~ ${o.outOfScope} hors périmètre`);
+  // Un modèle bavard rend le même transfert une fois par phrase. Le montrer
+  // par article dit lequel, et à quel point.
+  if (o.duplicates > 0) console.log(`      = ${o.duplicates} doublon${o.duplicates > 1 ? "s" : ""} replié${o.duplicates > 1 ? "s" : ""}`);
   for (const r of o.rejected) {
     console.log(`      ✗ rejeté : ${r.reason}`);
     // Le rejet seul ne dit pas POURQUOI le modèle s'est trompé. Sans ce que
@@ -169,7 +172,7 @@ async function main() {
 ─────────────────────────────────────────────
   ${report.listed} au flux → ${report.fetched} récupérés → ${report.extracted} soumis au modèle
   ${report.claims} déclarations retenues · ${report.rejected} rejetées · ${report.outOfScope} hors périmètre
-  ${report.silent} article${report.silent > 1 ? "s" : ""} sans rien en tirer${report.extracted ? ` (${Math.round((report.silent / report.extracted) * 100)} %)` : ""}
+  ${report.silent} article${report.silent > 1 ? "s" : ""} sans rien en tirer${report.extracted ? ` (${Math.round((report.silent / report.extracted) * 100)} %)` : ""}${report.duplicates ? `\n  ${report.duplicates} doublon${report.duplicates > 1 ? "s" : ""} replié${report.duplicates > 1 ? "s" : ""}` : ""}
   taux de rejet ${(rejectionRate(report) * 100).toFixed(0)} %
   ${seconds.toFixed(0)} s de modèle${report.extracted ? ` · ${(seconds / report.extracted).toFixed(0)} s par article` : ""}`);
   for (const e of report.errors) console.log(`  ! ${e}`);

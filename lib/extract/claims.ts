@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { formatFee } from "../format.ts";
+import { formatFee, normalizeName } from "../format.ts";
 import { mentionedLigue1Clubs, resolveLigue1Club, type Club } from "../referential.ts";
 import { findAmounts, qualifierNear } from "./prefilter.ts";
 
@@ -135,7 +135,15 @@ const reject = (reason: string, raw: unknown): Verdict => ({ ok: false, rejected
  */
 export function acceptClaim(raw: unknown, sentences: readonly string[]): Verdict {
   const parsed = RawClaimSchema.safeParse(raw);
-  if (!parsed.success) return reject(`schéma : ${parsed.error.issues[0]?.message}`, raw);
+  if (!parsed.success) {
+    // Le champ fautif, pas seulement la contrainte violée. « Too small:
+    // expected string to have >=2 characters » ne dit pas s'il s'agit du
+    // joueur ou d'un club — un passage réel a rendu quatre fois ce message
+    // sans qu'on puisse savoir quoi corriger.
+    const issue = parsed.error.issues[0];
+    const field = issue?.path.join(".") || "?";
+    return reject(`schéma : ${field} — ${issue?.message}`, raw);
+  }
   const c = parsed.data;
 
   const quote = sentences[c.sentence];
@@ -287,4 +295,47 @@ function locateAmount(
  */
 export function inScope(claim: AcceptedClaim): boolean {
   return claim.fromClub !== null || claim.toClub !== null;
+}
+
+/**
+ * Replie les déclarations qui disent la même chose du même article.
+ *
+ * Un modèle peut rendre une entrée par phrase pour un transfert unique — le
+ * 3B en a produit cinq d'affilée sur la même brève, une par phrase du corps.
+ * Ce sont cinq écritures du même fait, pas cinq faits.
+ *
+ * Le repli a lieu ici et pas seulement à l'écriture, pour deux raisons. Le
+ * rapport doit compter des faits, sinon le cadran de qualité récompense le
+ * bavardage. Et laisser Postgres trancher au `ON CONFLICT` reviendrait à
+ * garder la dernière ligne du lot, c'est-à-dire une au hasard.
+ *
+ * La règle de choix suit la valeur produite : **une déclaration chiffrée
+ * l'emporte** — c'est le montant qu'on est venu chercher — puis celle dont la
+ * citation nomme le joueur, plus facile à défendre devant un lecteur.
+ */
+export function dedupeClaims(claims: readonly AcceptedClaim[]): {
+  kept: AcceptedClaim[];
+  folded: number;
+} {
+  const best = new Map<string, AcceptedClaim>();
+
+  for (const claim of claims) {
+    const key = [
+      normalizeName(claim.player),
+      claim.fromClub?.tmId ?? claim.fromClubRaw ?? "-",
+      claim.toClub?.tmId ?? claim.toClubRaw ?? "-",
+    ].join("|");
+
+    const held = best.get(key);
+    if (!held || richer(claim, held)) best.set(key, claim);
+  }
+
+  return { kept: [...best.values()], folded: claims.length - best.size };
+}
+
+/** Une déclaration en vaut-elle une autre mieux ? Le montant d'abord. */
+function richer(candidate: AcceptedClaim, held: AcceptedClaim): boolean {
+  if ((candidate.feeEur !== null) !== (held.feeEur !== null)) return candidate.feeEur !== null;
+  if (candidate.playerInQuote !== held.playerInQuote) return candidate.playerInQuote;
+  return false;
 }

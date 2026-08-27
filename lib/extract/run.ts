@@ -1,6 +1,6 @@
 import type { Article, PressSource } from "../articles.ts";
 import type { PublishInput } from "../declarations.ts";
-import { acceptClaim, inScope, type AcceptedClaim, type Rejected } from "./claims.ts";
+import { acceptClaim, dedupeClaims, inScope, type AcceptedClaim, type Rejected } from "./claims.ts";
 import { MissingModelError, type Extractor } from "./ollama.ts";
 import { prefilter } from "./prefilter.ts";
 
@@ -27,6 +27,8 @@ export type ArticleOutcome = {
    * coûté un diagnostic à la main sur la sortie brute.
    */
   outOfScope: number;
+  /** Déclarations repliées parce qu'elles répétaient la même, sur cet article. */
+  duplicates: number;
   /** Durée de l'appel au modèle. Le chiffre qui dit si la cadence tient. */
   ms: number;
   /**
@@ -48,6 +50,14 @@ export type RunReport = {
   rejected: number;
   /** Hors périmètre : déclaration valide, mais sans club de Ligue 1. */
   outOfScope: number;
+  /**
+   * Déclarations repliées parce qu'elles répétaient une autre du même article.
+   *
+   * Un signal de qualité à part entière : le 3B a rendu cinq entrées pour un
+   * seul transfert, une par phrase. Les compter comme retenues récompenserait
+   * le bavardage.
+   */
+  duplicates: number;
   /**
    * Articles soumis au modèle dont il n'a **rien** tiré : ni déclaration, ni
    * rejet, ni même une déclaration hors périmètre. Le cadran qui manquait — le
@@ -89,7 +99,7 @@ export async function runSource(
 
   const report: RunReport = {
     listed: 0, fetched: 0, extracted: 0, claims: 0, rejected: 0,
-    outOfScope: 0, silent: 0, msTotal: 0, outcomes: [], errors: [],
+    outOfScope: 0, silent: 0, duplicates: 0, msTotal: 0, outcomes: [], errors: [],
   };
 
   const items = await source.listRecent();
@@ -124,7 +134,7 @@ export async function runSource(
       const outcome: ArticleOutcome = {
         article,
         skipped: gate.reason === "ok" ? null : gate.reason,
-        claims: [], rejected: [], outOfScope: 0, ms: 0, raw: "", sentences: gate.sentences,
+        claims: [], rejected: [], outOfScope: 0, duplicates: 0, ms: 0, raw: "", sentences: gate.sentences,
       };
       report.outcomes.push(outcome);
       options.onArticle?.(outcome);
@@ -172,12 +182,17 @@ export async function runSource(
       claims.push(verdict.claim);
     }
 
-    report.claims += claims.length;
+    // Replié AVANT de compter : un modèle qui rend cinq fois le même transfert
+    // ne doit pas faire cinq fois mieux au tableau de bord.
+    const { kept, folded } = dedupeClaims(claims);
+    report.duplicates += folded;
+
+    report.claims += kept.length;
     report.rejected += rejected.length;
-    if (claims.length === 0 && rejected.length === 0 && outOfScope === 0) report.silent += 1;
+    if (kept.length === 0 && rejected.length === 0 && outOfScope === 0) report.silent += 1;
 
     const outcome: ArticleOutcome = {
-      article, skipped: null, claims, rejected, outOfScope, ms,
+      article, skipped: null, claims: kept, rejected, outOfScope, duplicates: folded, ms,
       raw: rawText, sentences: gate.sentences,
     };
     report.outcomes.push(outcome);

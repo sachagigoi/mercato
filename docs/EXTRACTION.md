@@ -83,6 +83,7 @@ extractions sans qu'on puisse voir la sortie du modèle.
 |---|---|
 | **taux de rejet** | La **précision**. Il se lit sans étiqueter quoi que ce soit, et il monte dès qu'un changement de modèle ou de consigne fait dériver l'extraction. |
 | **sans rien en tirer** | Le **rappel**, autant qu'on peut l'approcher sans étiquetage : un article de L1 dont le modèle n'a tiré ni déclaration ni rejet. Un article peut légitimement ne parler d'aucun mouvement ; c'est la *part* qui alerte. |
+| **doublons repliés** | Écritures multiples du même transfert dans un même article. Un signal de qualité à part entière : le 3B en a produit cinq d'affilée. |
 | **hors périmètre** | Extraction juste, mais sans club de L1. Compté à part exprès : le mélanger aux rejets fausserait le seul chiffre qui mesure le modèle. |
 | **s par article** | Dit si la cadence tient. Au-delà de ~90 s, passer au 3B. |
 
@@ -94,7 +95,7 @@ qui doit inquiéter, c'est un taux **durablement** au-dessus de 30 %.
 > réel a manqué une signature libre à Brest sans qu'aucun chiffre ne bouge :
 > ni déclaration, ni rejet, donc rien à voir. D'où la colonne des silences.
 
-> **Six passages réels ont fait évoluer l'extraction**, chacun sur un défaut
+> **Sept passages réels ont fait évoluer l'extraction**, chacun sur un défaut
 > que le papier n'aurait pas montré.
 >
 > **Le premier a rejeté 100 %.** Deux causes, toutes deux de
@@ -149,6 +150,15 @@ qui doit inquiéter, c'est un taux **durablement** au-dessus de 30 %.
 > modèle rend `exact` sur « environ 35 millions » comme sur « au moins 25
 > millions ». La nuance se lit maintenant dans le texte, juste avant le
 > chiffre — déterministe, testé, et gratuit.
+>
+> **Le septième était le 3B, et il a surtout révélé deux défauts du tableau de
+> bord.** Il a rendu cinq entrées pour un seul transfert — une par phrase — et
+> les neuf « déclarations retenues » affichées n'étaient qu'environ trois faits.
+> Un modèle bavard ne doit pas mieux noter qu'un modèle juste : les doublons
+> sont désormais repliés avant d'être comptés, en gardant la déclaration
+> chiffrée. Et « Too small: expected string to have >=2 characters », rendu
+> quatre fois, ne disait pas s'il s'agissait du joueur ou d'un club : le rejet
+> nomme maintenant le champ.
 
 ## 4. Comparer deux modèles
 
@@ -167,10 +177,25 @@ rm -f .mercato-seen.json
 npm run extract -- --dry-run --model qwen2.5:3b-instruct-q4_K_M --limit 5
 ```
 
-Le 3B est ~2,5× plus rapide. S'il tient le taux de rejet du 7B sur de
-l'extraction à schéma contraint — champs courts, vocabulaire fermé, phrase à
-désigner par son numéro — **prends le 3B et ne repense plus au matériel**. Le
-7B reste utile comme arbitre pour étiqueter les cas litigieux.
+**Mesuré, et tranché : reste sur le 7B.** Le 3B est ~25 % plus rapide (31 s
+contre 42 s par article) et ça ne rachète pas ce qu'il coûte.
+
+| | 7B | 3B |
+|---|---|---|
+| Montants trouvés | 35 M€ et 25 M€ | **aucun des deux** |
+| Doublons | — | 5 entrées pour un seul transfert |
+| Sorties hors schéma | — | 4 sur un seul article |
+| `feeKind` | juste | « libre » sur une vente à 25 M€ |
+| Par article | 42 s | 31 s |
+
+Le montant EST le produit : un modèle qui va vite et ne le trouve pas ne sert
+à rien ici. Le 3B a bien un mérite — il a rempli `fromClub` là où le 7B le
+laissait à null — mais c'est un point pour la consigne v7, pas pour lui.
+
+> **Une comparaison honnête demande le même corpus.** Ces deux passages
+> partagent quatre brèves sur cinq et ne tournaient pas sur la même version de
+> consigne. C'est assez pour trancher sur les montants, pas pour départager à
+> la marge. D'où le `rm .mercato-seen.json` ci-dessus.
 
 ## 5. Brancher n8n
 

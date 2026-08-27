@@ -713,6 +713,12 @@ Un corollaire, tiré du sixième : **ce que le code peut trancher exactement, le
 code le tranche.** Le champ `qualifier` a passé six passages à sortir `exact`
 parce qu'on le demandait au modèle, alors que « environ » et « au moins »
 figurent dans la phrase, juste avant le chiffre qu'on vient d'y localiser.
+
+Et un avertissement sur la mesure elle-même : **chaque cadran finit par être
+optimisé**. Le taux de rejet ignorait les oublis, jusqu'à ce qu'un passage en
+laisse filer un. Le compte de déclarations récompensait le bavardage, jusqu'à
+ce qu'un modèle rende cinq fois le même transfert. Un tableau de bord se
+corrige aussi souvent que le code qu'il mesure.
 - **GitHub Actions** *(retenu)* : gratuit, timeout de 6 h, runner à 16 Go, secrets intégrés, et on y
   installe ce qu'on veut. Le job n'est pas critique en latence — la carte s'affiche déjà avec le
   masque circulaire en attendant. Limites connues et acceptées : les crons GitHub sont *best effort*
@@ -1231,7 +1237,7 @@ d'articles dont le modèle ne tire *ni déclaration ni rejet* : un article de L1
 peut légitimement ne parler d'aucun mouvement, mais une part qui monte est un
 oubli qui s'installe.
 
-### 13.5 Ce que six passages réels ont corrigé
+### 13.5 Ce que sept passages réels ont corrigé
 
 Aucun de ces défauts n'était visible sur le papier.
 
@@ -1245,6 +1251,7 @@ Aucun de ces défauts n'était visible sur le papier.
 | 5 | **Zéro rejet, et deux déclarations sur six attendues** | Précision parfaite, rappel médiocre — la panne inverse des précédentes. Sur « PSG : Liverpool avance pour Barcola », `fromClub` à null alors que le PSG est dans le titre : la déclaration sort du périmètre sans un mot. Le préfiltre connaissait déjà le club et ne s'en servait pas. La consigne annonce désormais les clubs de L1 cités, et un garde-fou symétrique refuse un club attribué que l'article ne cite pas. |
 
 | 6 | **Le rappel remonte, `fromClub` résiste** | Sur les mêmes cinq brèves : trois déclarations au lieu de deux, plus aucun silence. Mais `fromClub` reste à null dans les trois cas où le club d'origine est étranger. « Le club qu'il quitte » demande de trancher un sens ; la consigne demande désormais « le club où il joue aujourd'hui ». Le champ `qualifier`, lui, sortait toujours à `exact` — la nuance (« environ », « au moins ») se lit maintenant dans le texte juste avant le chiffre, ce que le code fait mieux et gratuitement. |
+| 7 | **Le 3B mesuré : plus rapide, et inutilisable ici** | 31 s contre 42 s par article, mais aucun des deux montants que le 7B trouvait, cinq entrées pour un seul transfert, et quatre sorties hors schéma sur un même article. Le montant est le produit. Le passage a surtout révélé deux défauts du tableau de bord : les doublons comptaient comme des déclarations (repliés avant comptage désormais, en gardant la chiffrée), et un rejet de schéma ne nommait pas le champ fautif. |
 
 **Ce que la série enseigne** : les trois premiers défauts venaient du schéma,
 les deux suivants de ce que la consigne *ne dit pas*. Un décodeur contraint ne

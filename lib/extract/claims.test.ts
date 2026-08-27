@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { acceptClaim, inScope, OLLAMA_FORMAT, type RawClaim } from "./claims.ts";
+import { acceptClaim, dedupeClaims, inScope, OLLAMA_FORMAT, type RawClaim } from "./claims.ts";
 import { splitSentences } from "./prefilter.ts";
 
 const ARTICLE = splitSentences(
@@ -243,5 +243,64 @@ describe("OLLAMA_FORMAT", () => {
     // `sentence` est un entier, pas la citation : c'est ce qui économise une
     // quarantaine de tokens par déclaration sur un CPU à 3 tokens/s.
     assert.equal(item.sentence.type, "integer");
+  });
+});
+
+describe("dedupeClaims", () => {
+  const accepted = (over: Partial<RawClaim>) => {
+    const v = acceptClaim(claim(over), ARTICLE);
+    assert.ok(v.ok);
+    return v.claim;
+  };
+
+  it("replie cinq écritures du même transfert en une", () => {
+    // Le cas réel : sur la brève Barcola, le 3B a rendu une entrée par phrase
+    // du corps. Cinq écritures du même fait, pas cinq faits.
+    const five = [0, 1, 2, 3, 4].map((i) => accepted({ feeText: null, sentence: Math.min(i, 3) }));
+    const { kept, folded } = dedupeClaims(five);
+    assert.equal(kept.length, 1);
+    assert.equal(folded, 4);
+  });
+
+  it("garde la déclaration chiffrée face à une sans montant", () => {
+    // C'est le montant qu'on est venu chercher : entre deux écritures du même
+    // transfert, celle qui le porte gagne.
+    const { kept } = dedupeClaims([
+      accepted({ feeText: null, sentence: 1 }),
+      accepted({ feeText: "70 M€" }),
+    ]);
+    assert.equal(kept.length, 1);
+    assert.equal(kept[0].feeEur, 70_000_000);
+  });
+
+  it("départage ensuite sur le nom présent dans la citation", () => {
+    // À valeur égale, la citation qui nomme le joueur se défend mieux.
+    const { kept } = dedupeClaims([
+      accepted({ feeText: null, sentence: 3 }),
+      accepted({ feeText: null, sentence: 1 }),
+    ]);
+    assert.equal(kept.length, 1);
+    assert.equal(kept[0].playerInQuote, true);
+  });
+
+  it("ne replie pas deux destinations différentes", () => {
+    // Deux clubs qui se disputent un joueur, ce sont deux pistes.
+    const { kept, folded } = dedupeClaims([
+      accepted({ toClub: "Liverpool" }),
+      accepted({ toClub: "Chelsea" }),
+    ]);
+    assert.equal(kept.length, 2);
+    assert.equal(folded, 0);
+  });
+});
+
+describe("messages de rejet", () => {
+  it("nomme le champ fautif, pas seulement la contrainte", () => {
+    // « Too small: expected string to have >=2 characters » ne dit pas s'il
+    // s'agit du joueur ou d'un club. Un passage réel a rendu quatre fois ce
+    // message sans qu'on puisse savoir quoi corriger.
+    const v = acceptClaim({ ...claim(), player: "" }, ARTICLE);
+    assert.equal(v.ok, false);
+    assert.ok(!v.ok && v.rejected.reason.includes("player"), v.ok ? "" : v.rejected.reason);
   });
 });
