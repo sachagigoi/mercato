@@ -74,20 +74,27 @@ extractions sans qu'on puisse voir la sortie du modèle.
 ```
   25 au flux → 11 récupérés → 9 soumis au modèle
   7 déclarations retenues · 2 rejetées · 1 hors périmètre
+  1 article sans rien en tirer (11 %)
   taux de rejet 22 %
   340 s de modèle · 38 s par article
 ```
 
 | Chiffre | Ce qu'il dit |
 |---|---|
-| **taux de rejet** | Le cadran de qualité. Il se lit sans étiqueter quoi que ce soit, et il monte dès qu'un changement de modèle ou de prompt fait dériver l'extraction. |
+| **taux de rejet** | La **précision**. Il se lit sans étiqueter quoi que ce soit, et il monte dès qu'un changement de modèle ou de consigne fait dériver l'extraction. |
+| **sans rien en tirer** | Le **rappel**, autant qu'on peut l'approcher sans étiquetage : un article de L1 dont le modèle n'a tiré ni déclaration ni rejet. Un article peut légitimement ne parler d'aucun mouvement ; c'est la *part* qui alerte. |
 | **hors périmètre** | Extraction juste, mais sans club de L1. Compté à part exprès : le mélanger aux rejets fausserait le seul chiffre qui mesure le modèle. |
 | **s par article** | Dit si la cadence tient. Au-delà de ~90 s, passer au 3B. |
 
 Un rejet n'est pas un incident : c'est le garde-fou qui fait son travail. Ce
 qui doit inquiéter, c'est un taux **durablement** au-dessus de 30 %.
 
-> **Trois passages réels ont fait évoluer le schéma**, chacun sur un défaut
+> **Les deux chiffres se lisent ensemble.** Le taux de rejet ne voit que ce que
+> le modèle a produit — il est aveugle à ce qu'il a laissé passer. Un passage
+> réel a manqué une signature libre à Brest sans qu'aucun chiffre ne bouge :
+> ni déclaration, ni rejet, donc rien à voir. D'où la colonne des silences.
+
+> **Quatre passages réels ont fait évoluer l'extraction**, chacun sur un défaut
 > que le papier n'aurait pas montré.
 >
 > **Le premier a rejeté 100 %.** Deux causes, toutes deux de
@@ -106,7 +113,21 @@ qui doit inquiéter, c'est un taux **durablement** au-dessus de 30 %.
 > **Le troisième a rejeté une extraction juste.** « Les représentants disposent
 > d'un accord avec l'AS Roma » et « l'OL réclame 40 M€ » sont deux phrases
 > distinctes ; le schéma n'autorisait qu'un seul indice. `feeSentence` permet
-> désormais au montant de citer sa propre phrase, sans affaiblir le contrôle.
+> désormais au montant de citer sa propre phrase.
+>
+> **Le quatrième a rejeté les deux seules extractions chiffrées**, toutes deux
+> justes, et pour la même raison : le modèle normalise la notation du montant
+> vers celle du titre. Il a rendu « 40 millions d'euros » là où l'article écrit
+> « 40 M€ », et « 9,3 M€ » là où le corps écrit « 9,3 millions d'euros ». La
+> comparaison porte désormais sur la **valeur**, avec le même parseur des deux
+> côtés, et le montant est **cherché dans tout l'article** au lieu d'être
+> vérifié là où le modèle le dit. Le contrôle ne perd rien : une hallucination
+> reste introuvable où qu'on la cherche. `feeSentence` n'est plus qu'un
+> départage entre deux phrases portant la même valeur.
+>
+> Le même passage a laissé filer une signature libre sans qu'aucun chiffre ne
+> s'en aperçoive — d'où la ligne des silences, et une consigne qui dit
+> maintenant qu'un transfert sans montant compte autant qu'un autre.
 
 ## 4. Comparer deux modèles
 
@@ -214,11 +235,13 @@ l'*indice* d'une phrase ; le code en tire la citation. Elle est donc exacte par
 construction — aucune vérification de sous-chaîne ne peut échouer sur une
 apostrophe — et ça coûte deux tokens au lieu de quarante.
 
-**Le montant est vérifié dans la phrase désignée.** C'est le contrôle qui
-attrape l'hallucination la plus coûteuse : un chiffre plausible, bien formé, et
-absent de l'article. Le nom du joueur, lui, est vérifié sur l'article entier :
-exiger le nom dans la citation rejetait des extractions justes, la presse
-alternant nom et périphrase (« pour *l'international français* »).
+**Le montant est cherché dans l'article, et comparé en valeur.** C'est le
+contrôle qui attrape l'hallucination la plus coûteuse : un chiffre plausible,
+bien formé, et absent de l'article. Il a d'abord porté sur la phrase que le
+modèle désigne, et sur les caractères — il ne rejetait alors que des
+extractions justes. Le nom du joueur suit la même règle : vérifié sur l'article
+entier, parce que la presse alterne nom et périphrase (« pour *l'international
+français* »).
 
 **Le périmètre Ligue 1 est ce qui rend l'inférence CPU tenable.** Mesuré sur un
 flux réel : 10 articles sur 25 passent la porte. Le reste n'est jamais présenté

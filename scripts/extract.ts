@@ -61,6 +61,7 @@ function loadSeen(): Set<string> {
 
 const cut = (s: string, n = 110) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
+
 const euros = (n: number | null) =>
   n === null ? "—" : new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
 
@@ -89,8 +90,12 @@ function show(o: ArticleOutcome, verbose: boolean) {
   }
 
   if (verbose) {
+    // Les phrases entières dès qu'il y a un rejet. Tronquer à 100 caractères
+    // cache justement ce qu'on vient chercher : un passage réel a rejeté deux
+    // montants, et la phrase qui aurait tranché était coupée juste avant.
+    const width = o.rejected.length > 0 ? Infinity : 100;
     console.log("        — phrases soumises —");
-    o.sentences.forEach((s, i) => console.log(`        [${i}] ${s.slice(0, 100)}`));
+    o.sentences.forEach((s, i) => console.log(`        [${i}] ${cut(s, width)}`));
     if (o.claims.length === 0 && o.rejected.length === 0) {
       console.log(`        — réponse brute — ${o.raw.slice(0, 400)}`);
     }
@@ -158,6 +163,7 @@ async function main() {
 ─────────────────────────────────────────────
   ${report.listed} au flux → ${report.fetched} récupérés → ${report.extracted} soumis au modèle
   ${report.claims} déclarations retenues · ${report.rejected} rejetées · ${report.outOfScope} hors périmètre
+  ${report.silent} article${report.silent > 1 ? "s" : ""} sans rien en tirer${report.extracted ? ` (${Math.round((report.silent / report.extracted) * 100)} %)` : ""}
   taux de rejet ${(rejectionRate(report) * 100).toFixed(0)} %
   ${seconds.toFixed(0)} s de modèle${report.extracted ? ` · ${(seconds / report.extracted).toFixed(0)} s par article` : ""}`);
   for (const e of report.errors) console.log(`  ! ${e}`);

@@ -56,40 +56,54 @@ describe("acceptClaim", () => {
     assert.ok(v.ok, "recopie sans espace refusée");
   });
 
-  it("rejette un montant absent de la phrase désignée", () => {
+  it("rejette un montant absent de l'article", () => {
     // L'hallucination qui coûte le plus cher : un chiffre plausible, bien
     // formé, et introuvable dans l'article. C'est ce contrôle qui rend un
-    // modèle local acceptable pour afficher de l'argent.
+    // modèle local acceptable pour afficher de l'argent — et il survit au
+    // passage d'une vérification par phrase à une recherche sur le texte.
     const v = acceptClaim(claim({ feeText: "85 M€" }), ARTICLE);
     assert.equal(v.ok, false);
     assert.ok(!v.ok && v.rejected.reason.includes("montant"));
   });
 
-  it("rejette un montant pris dans une autre phrase que celle désignée", () => {
-    // Le montant est bien dans l'article, mais pas là où le modèle le dit :
-    // vérifier au niveau de l'article laisserait passer ce recollage.
-    const v = acceptClaim(claim({ sentence: 3, feeSentence: 3 }), ARTICLE);
-    assert.equal(v.ok, false);
-  });
-
-  it("accepte un montant qui vit dans une autre phrase que le transfert", () => {
-    // Le cas réel qui a fait évoluer le schéma : « les représentants disposent
-    // d'un accord avec l'AS Roma » et « l'OL réclame 40 M€ » sont deux phrases.
-    // Un seul indice rejetait une extraction entièrement juste.
-    const v = acceptClaim(claim({ sentence: 1, feeSentence: 2 }), ARTICLE);
+  it("retrouve le montant quel que soit l'indice donné par le modèle", () => {
+    // Cas réel : sur la brève Ekomié, le montant figurait jusque dans le titre,
+    // et le modèle désignait une autre phrase. L'extraction était juste ; c'est
+    // le contrôle par phrase qui la rejetait.
+    const v = acceptClaim(claim({ sentence: 1, feeSentence: 1 }), ARTICLE);
     assert.ok(v.ok);
     assert.equal(v.claim.feeEur, 70_000_000);
     assert.equal(v.claim.quote, ARTICLE[1], "la citation doit rester celle du transfert");
-    assert.equal(v.claim.feeQuote, ARTICLE[2], "le montant doit citer sa propre phrase");
+    assert.equal(v.claim.feeQuote, ARTICLE[2], "le montant doit citer la phrase où il est");
   });
 
-  it("rejette une phrase de montant hors du texte", () => {
+  it("accepte une autre notation du même montant", () => {
+    // Cas réel : le modèle a rendu « 40 millions d'euros » là où l'article
+    // écrivait « 40 M€ ». Même fait, autre écriture — la comparaison porte
+    // désormais sur la valeur, avec le même parseur des deux côtés.
+    const v = acceptClaim(claim({ feeText: "70 millions d'euros" }), ARTICLE);
+    assert.ok(v.ok, "notation équivalente refusée");
+    assert.equal(v.claim.feeEur, 70_000_000);
+  });
+
+  it("ignore un indice de phrase hors du texte au lieu de rejeter", () => {
+    // L'indice ne sert plus qu'à départager : il ne peut plus rien faire
+    // tomber. Le modèle pointe mal bien plus souvent qu'il n'invente.
     const v = acceptClaim(claim({ sentence: 1, feeSentence: 99 }), ARTICLE);
-    assert.equal(v.ok, false);
-    assert.ok(!v.ok && v.rejected.reason.includes("montant"));
+    assert.ok(v.ok);
+    assert.equal(v.claim.feeQuote, ARTICLE[2]);
   });
 
-  it("retombe sur la phrase du transfert quand feeSentence est absent", () => {
+  it("cite le corps plutôt que le titre quand les deux portent le montant", () => {
+    // Un titre résume, il ne rapporte pas. Les trois extractions du dernier
+    // passage réel citaient toutes le titre : vrai, mais sans valeur de preuve.
+    const withTitle = ["PSG : Liverpool prêt à mettre 70 M€.", ...ARTICLE];
+    const v = acceptClaim(claim({ sentence: 0, feeSentence: null }), withTitle);
+    assert.ok(v.ok);
+    assert.equal(v.claim.feeQuote, withTitle[3], "le titre a été préféré au corps");
+  });
+
+  it("retombe sur la phrase du montant quand feeSentence est absent", () => {
     const v = acceptClaim(claim({ feeSentence: null }), ARTICLE);
     assert.ok(v.ok);
     assert.equal(v.claim.feeQuote, ARTICLE[2]);

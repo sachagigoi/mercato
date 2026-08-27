@@ -8,10 +8,10 @@ import { findAmounts } from "./prefilter.ts";
  * Ce que le modèle rend, et ce qu'on accepte d'en garder.
  *
  * Le principe tient en une phrase : **le modèle ne produit jamais un fait
- * directement affichable**. Il désigne, et le code vérifie. Un montant qui
- * n'est pas retrouvé dans la phrase que le modèle a lui-même désignée est
- * rejeté — c'est ce qui permet de faire tourner un 7B local sur un produit qui
- * affiche de l'argent.
+ * directement affichable**. Il annonce, et le code retrouve dans le texte de
+ * quoi l'étayer — un montant introuvable dans l'article est rejeté. C'est ce
+ * qui permet de faire tourner un 7B local sur un produit qui affiche de
+ * l'argent.
  */
 
 /** Nature de l'opération. Fermée : un modèle contraint ne peut pas inventer de valeur. */
@@ -48,13 +48,12 @@ export const RawClaimSchema = z.object({
   /** Indice de la phrase qui énonce le transfert. Pas la phrase : son numéro. */
   sentence: z.number().int().nonnegative(),
   /**
-   * Indice de la phrase qui porte le montant, quand ce n'est pas la même.
+   * Indice de la phrase qui porte le montant. **Un indice, pas une preuve.**
    *
-   * Un article réel a fait tomber la version à un seul indice : « les
-   * représentants disposent d'un accord avec l'AS Roma » et « l'OL réclame
-   * 40 M€ » sont deux phrases distinctes. Le modèle désignait la première,
-   * le montant vivait dans la seconde, et le garde-fou rejetait une
-   * extraction pourtant entièrement juste.
+   * Il a d'abord servi de contrôle, et n'a fait que rejeter des extractions
+   * justes : le modèle pointe mal bien plus souvent qu'il n'invente. Le code
+   * cherche désormais le montant dans tout l'article ; cet indice ne sert plus
+   * qu'à départager quand la même valeur revient dans plusieurs phrases.
    */
   feeSentence: z.number().int().nonnegative().nullish(),
 });
@@ -161,20 +160,17 @@ export function acceptClaim(raw: unknown, sentences: readonly string[]): Verdict
   // d'être pondérée plus prudemment qu'une brève monosujet.
   const playerInQuote = normalized(quote).includes(normalized(lastName));
 
-  // Le montant est vérifié dans SA phrase, qui n'est pas forcément celle qui
-  // énonce le transfert. Le contrôle reste au niveau de la phrase — c'est lui
-  // qui attrape l'hallucination coûteuse, un chiffre plausible et absent — mais
-  // il porte sur la phrase que le modèle désigne pour le montant.
-  const feeQuote = sentences[c.feeSentence ?? c.sentence];
-  if (c.feeText && feeQuote === undefined)
-    return reject("phrase du montant hors du texte", raw);
-
-  const fee = amountFrom(c.feeText, feeQuote ?? "");
-  if (fee === "absent") return reject("montant introuvable dans la phrase citée", raw);
+  // Le montant est CHERCHÉ dans l'article, il n'est plus vérifié à l'endroit
+  // que le modèle désigne. Deux passages réels ont montré que le contrôle par
+  // phrase ne rejetait que des extractions justes, jamais une hallucination.
+  const fee = locateAmount(c.feeText, sentences, c.feeSentence);
+  if (fee === "absent") return reject("montant introuvable dans l'article", raw);
   if (fee === "illisible") return reject(`montant illisible : ${c.feeText}`, raw);
 
-  const bonus = amountFrom(c.bonusText, quote);
-  const bonusEur = typeof bonus === "number" ? bonus : null;
+  const located = typeof fee === "object" ? fee : null;
+
+  const bonus = locateAmount(c.bonusText, sentences, null);
+  const bonusEur = typeof bonus === "object" && bonus !== null ? bonus.eur : null;
 
   return {
     ok: true,
@@ -184,14 +180,14 @@ export function acceptClaim(raw: unknown, sentences: readonly string[]): Verdict
       toClubRaw: c.toClub?.trim() || null,
       fromClub: resolveLigue1Club(c.fromClub),
       toClub: resolveLigue1Club(c.toClub),
-      feeEur: typeof fee === "number" ? fee : null,
-      feeLabel: typeof fee === "number" ? formatFee(fee) : null,
+      feeEur: located ? located.eur : null,
+      feeLabel: located ? formatFee(located.eur) : null,
       feeKind: c.feeKind,
       qualifier: c.qualifier,
       bonusEur,
       stance: c.stance,
       quote,
-      feeQuote: typeof fee === "number" ? (feeQuote ?? null) : null,
+      feeQuote: located ? sentences[located.sentence] : null,
       playerInQuote,
     },
   };
@@ -200,22 +196,62 @@ export function acceptClaim(raw: unknown, sentences: readonly string[]): Verdict
 const normalized = (s: string) =>
   s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
-/** Espaces fine et insécable comprises : « 100 M€ » s'écrit de plusieurs façons. */
-const loose = (s: string) => normalized(s).replace(/[\s\u202f\u00a0]+/g, "");
+type Located = { eur: number; sentence: number };
 
 /**
- * Montant recopié -> euros, sous condition qu'il vienne bien de la phrase.
+ * Localise dans l'article le montant que le modèle annonce.
+ *
+ * **On compare des valeurs, plus des caractères, et on cherche le montant
+ * dans tout l'article.** Le renversement vient de deux rejets réels, tous deux
+ * d'extractions entièrement justes, et tous deux dus à la même cause : le
+ * modèle normalise la notation vers celle du titre.
+ *
+ * - Fofana : le modèle rend « 40 millions d'euros », l'article écrit « 40 M€ ».
+ * - Ekomié : le modèle rend « 9,3 M€ », le corps écrit « 9,3 millions d'euros ».
+ *
+ * Dans les deux cas l'indice de phrase était **juste** — c'est la comparaison
+ * littérale qui rejetait. La recherche sur l'article entier vient en second :
+ * elle couvre le cas, plus rare, où le modèle pointe mal.
+ *
+ * Le contrôle ne perd rien au change. Ce qu'il traque, c'est un chiffre
+ * plausible et **absent de l'article** — une hallucination reste introuvable
+ * où qu'on la cherche. Et le contrôle par phrase ne protégeait pas de ce qu'on
+ * croyait : un modèle qui attribue le mauvais chiffre au transfert désigne
+ * aussi la phrase où ce chiffre se trouve, donc passait déjà.
+ *
+ * La comparaison porte sur la **valeur**, pas sur les caractères : c'est le
+ * même parseur des deux côtés, celui que `npm test` éprouve sur de la prose
+ * française réelle.
  *
  * Trois issues, distinctes exprès : pas de montant annoncé, montant annoncé
- * mais absent du texte (l'hallucination qu'on traque), et montant présent mais
- * que le parseur ne sait pas lire (un défaut de notre côté, pas du modèle).
+ * mais absent du texte (l'hallucination qu'on traque), et montant que le
+ * parseur ne sait pas lire (un défaut de notre côté, pas du modèle).
  */
-function amountFrom(text: string | null | undefined, quote: string): number | null | "absent" | "illisible" {
+function locateAmount(
+  text: string | null | undefined,
+  sentences: readonly string[],
+  hint: number | null | undefined,
+): Located | null | "absent" | "illisible" {
   const value = text?.trim();
   if (!value) return null;
-  if (!loose(quote).includes(loose(value))) return "absent";
-  const [amount] = findAmounts(value);
-  return amount ? amount.eur : "illisible";
+
+  const [parsed] = findAmounts(value);
+  if (!parsed) return "illisible";
+
+  const matches = sentences.flatMap((s, i) =>
+    findAmounts(s).some((a) => a.eur === parsed.eur) ? [i] : [],
+  );
+  if (matches.length === 0) return "absent";
+
+  // L'indice du modèle ne sert plus qu'à départager, quand la même valeur
+  // revient plusieurs fois. Il ne peut plus faire rejeter quoi que ce soit.
+  if (hint != null && matches.includes(hint)) return { eur: parsed.eur, sentence: hint };
+
+  // À défaut, le corps plutôt que le titre : la phrase 0 est le titre, qui
+  // résume au lieu de rapporter. Les trois extractions du dernier passage réel
+  // citaient toutes le titre — c'est vrai, mais ça n'a pas valeur de preuve.
+  const body = matches.find((i) => i > 0);
+  return { eur: parsed.eur, sentence: body ?? matches[0] };
 }
 
 /**

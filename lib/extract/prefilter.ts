@@ -63,7 +63,12 @@ export function findAmounts(text: string): Amount[] {
 export function splitSentences(text: string): string[] {
   return text
     .replace(/\s+/g, " ")
-    .split(/(?<=[.!?])\s+(?=[A-ZÀ-Þ«"])/)
+    // Deux coupures, pas une. La seconde traite le point SANS espace après
+    // lui : Maxifoot recolle régulièrement deux phrases (« son joueur.Surtout,
+    // Fofana… »), et la citation affichée en emportait alors deux pour le prix
+    // d'une. La minuscule exigée avant le point protège « M. Dupont » et les
+    // initiales, qu'une coupure sur tout point suivi d'une majuscule casserait.
+    .split(/(?<=[.!?])\s+(?=[A-ZÀ-Þ«"])|(?<=[a-zà-ÿ][.!?])(?=[A-ZÀ-Þ])/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }

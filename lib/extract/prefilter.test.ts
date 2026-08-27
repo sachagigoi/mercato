@@ -101,3 +101,20 @@ describe("prefilter", () => {
     assert.ok(passing.length >= 5 && passing.length <= 15, `${passing.length} sur ${items.length}`);
   });
 });
+
+describe("splitSentences — phrases recollées", () => {
+  it("coupe un point sans espace après lui", () => {
+    // Maxifoot recolle régulièrement deux phrases. Sans cette coupure, la
+    // citation affichée en emporte deux pour le prix d'une.
+    const out = splitSentences("L'OL réclame 40 M€ pour son joueur.Surtout, Fofana hésite.");
+    assert.equal(out.length, 2);
+    assert.equal(out[1], "Surtout, Fofana hésite.");
+  });
+
+  it("ne coupe ni les initiales ni les abréviations", () => {
+    // « M.Dupont » n'est pas une frontière de phrase : la minuscule exigée
+    // avant le point est ce qui l'en distingue.
+    assert.equal(splitSentences("Selon M.Dupont, le deal avance.").length, 1);
+    assert.equal(splitSentences("Un chèque de 9,3 M€ est évoqué.").length, 1);
+  });
+});

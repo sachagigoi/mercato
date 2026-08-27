@@ -5,7 +5,8 @@ import { describe, it } from "node:test";
 import type { BytesFetcher } from "../articles.ts";
 import { publishDeclarations, type DeclarationRow } from "../declarations.ts";
 import { createMaxifoot } from "../sources/maxifoot.ts";
-import { OLLAMA_FORMAT, STANCES } from "./claims.ts";
+import { acceptClaim, OLLAMA_FORMAT, STANCES } from "./claims.ts";
+import { prefilter } from "./prefilter.ts";
 import { buildUserPrompt, SYSTEM_PROMPT, type Extractor } from "./ollama.ts";
 import { rejectionRate, runSource, toPublishPayload } from "./run.ts";
 
@@ -304,5 +305,71 @@ describe("worker -> endpoint", () => {
     // Le club résolu par le serveur, à partir du seul libellé « Lille ».
     assert.equal(written[0].from_club_key, "1082");
     assert.match(written[0].quote, /100 M€|100 millions/);
+  });
+});
+
+describe("régressions du passage réel du 27/08", () => {
+  /** Les phrases d'une brève enregistrée, telles que le modèle les reçoit. */
+  async function sentencesOf(file: string) {
+    const source = createMaxifoot({ async get(url) { return fixture(url); } });
+    const article = await source.fetchArticle({
+      guid: file, url: file, title: "", teaser: null, publishedAt: null,
+    });
+    return prefilter(article).sentences;
+  }
+
+  // Les deux sorties EXACTES du modèle ce jour-là. Toutes deux justes, toutes
+  // deux rejetées : le modèle normalise la notation du montant vers celle du
+  // titre, et la comparaison était littérale.
+  it("accepte Fofana, qui écrivait « 40 millions d'euros » pour « 40 M€ »", async () => {
+    const sentences = await sentencesOf("maxifoot-article-3.html");
+    const v = acceptClaim(
+      { player: "Malick Fofana", fromClub: "Olympique Lyonnais", toClub: null, feeText: "40 millions d'euros", feeKind: "transfert", stance: "accord", sentence: 3, feeSentence: 3 },
+      sentences,
+    );
+    assert.ok(v.ok, "extraction juste toujours rejetée");
+    assert.equal(v.claim.feeEur, 40_000_000);
+    assert.match(v.claim.feeQuote ?? "", /réclame 40 M€/);
+  });
+
+  it("accepte Ekomié, qui écrivait « 9,3 M€ » pour « 9,3 millions d'euros »", async () => {
+    const sentences = await sentencesOf("maxifoot-article-4.html");
+    const v = acceptClaim(
+      { player: "Jacques Ekomié", fromClub: "Angers", toClub: "Wrexham", feeText: "9,3 M€", feeKind: "transfert", stance: "accord", sentence: 0, feeSentence: 2 },
+      sentences,
+    );
+    assert.ok(v.ok, "extraction juste toujours rejetée");
+    assert.equal(v.claim.feeEur, 9_300_000);
+    // Le corps, pas le titre — et une phrase, pas deux.
+    assert.match(v.claim.feeQuote ?? "", /^Selon les informations/);
+    assert.ok(!/De son côté/.test(v.claim.feeQuote ?? ""), "deux phrases collées en une citation");
+  });
+
+  it("rejette toujours un montant que l'article ne porte pas", async () => {
+    // Le contrôle qui compte survit au changement : un chiffre plausible et
+    // introuvable reste introuvable, où qu'on le cherche.
+    const sentences = await sentencesOf("maxifoot-article-3.html");
+    const v = acceptClaim(
+      { player: "Malick Fofana", fromClub: "Olympique Lyonnais", toClub: null, feeText: "65 M€", feeKind: "transfert", stance: "accord", sentence: 3, feeSentence: 3 },
+      sentences,
+    );
+    assert.equal(v.ok, false);
+  });
+});
+
+describe("le silence du modèle", () => {
+  it("compte à part un article dont le modèle ne tire rien", async () => {
+    // Le cadran qui manquait. Sur le passage réel, une signature libre à Brest
+    // est passée sans laisser de trace : ni déclaration, ni rejet, et donc
+    // aucun effet sur le taux de rejet. Un oubli ne doit pas être invisible.
+    const report = await runSource(
+      createMaxifoot(fixtureFetcher()),
+      fakeExtractor(() => []),
+      { sleep: noSleep },
+    );
+
+    assert.ok(report.extracted > 0);
+    assert.equal(report.silent, report.extracted, "les silences ne sont pas comptés");
+    assert.equal(rejectionRate(report), 0, "le taux de rejet ignore les silences — c'est voulu");
   });
 });

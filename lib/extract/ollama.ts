@@ -10,12 +10,13 @@ export interface Extractor {
   /** Rend la sortie brute du modèle. La validation est le travail du garde-fou. */
   extract(sentences: readonly string[]): Promise<{ claims: unknown[]; raw: string }>;
   readonly model: string;
-  /** Version du prompt, stockée avec chaque déclaration. Sans elle, impossible
-   *  d'expliquer pourquoi une carte affichait 50 M€ la semaine dernière. */
+  /** Version de l'extraction — consigne **et** garde-fou. Stockée avec chaque
+   *  déclaration : sans elle, impossible d'expliquer pourquoi une carte
+   *  affichait 50 M€ la semaine dernière. */
   readonly promptVersion: string;
 }
 
-export const PROMPT_VERSION = "4";
+export const PROMPT_VERSION = "5";
 
 /**
  * Consigne système, volontairement courte et **strictement identique** d'un
@@ -53,6 +54,11 @@ export const SYSTEM_PROMPT = [
   "",
   "La plupart des brèves n'annoncent aucun montant : feeText à null est le cas",
   "normal, pas un échec.",
+  "",
+  "Un transfert SANS montant compte autant qu'un autre : une signature libre,",
+  "une fin de contrat, une arrivée annoncée sans chiffre. Rends-la quand même,",
+  "avec feeText à null. Ne rends une liste vide que si l'article ne parle",
+  "d'aucun mouvement de joueur.",
 ].join("\n");
 
 export const buildUserPrompt = (sentences: readonly string[]) =>

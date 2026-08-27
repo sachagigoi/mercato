@@ -39,6 +39,16 @@ export type RunReport = {
   rejected: number;
   /** Hors périmètre : déclaration valide, mais sans club de Ligue 1. */
   outOfScope: number;
+  /**
+   * Articles soumis au modèle dont il n'a **rien** tiré : ni déclaration, ni
+   * rejet. Le cadran qui manquait — le taux de rejet mesure la précision, et
+   * reste muet sur les oublis. Un passage réel a laissé filer une signature
+   * libre à Brest sans qu'aucun chiffre ne s'en aperçoive.
+   *
+   * Un silence n'est pas une faute en soi : un article de L1 peut ne parler
+   * d'aucun mouvement. C'est sa PART qui alerte.
+   */
+  silent: number;
   msTotal: number;
   outcomes: ArticleOutcome[];
   errors: string[];
@@ -69,7 +79,7 @@ export async function runSource(
 
   const report: RunReport = {
     listed: 0, fetched: 0, extracted: 0, claims: 0, rejected: 0,
-    outOfScope: 0, msTotal: 0, outcomes: [], errors: [],
+    outOfScope: 0, silent: 0, msTotal: 0, outcomes: [], errors: [],
   };
 
   const items = await source.listRecent();
@@ -146,6 +156,7 @@ export async function runSource(
 
     report.claims += claims.length;
     report.rejected += rejected.length;
+    if (claims.length === 0 && rejected.length === 0) report.silent += 1;
 
     const outcome: ArticleOutcome = {
       article, skipped: null, claims, rejected, ms, raw: rawText, sentences: gate.sentences,

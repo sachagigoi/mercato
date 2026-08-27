@@ -1203,9 +1203,11 @@ apostrophe — et ça coûte deux tokens au lieu de quarante, sur un CPU à
 
 Trois contrôles, et un seul est verrouillé au niveau de la phrase :
 
-- **Le montant est vérifié dans la phrase que le modèle a lui-même désignée.**
-  C'est le contrôle qui attrape l'hallucination coûteuse : un chiffre plausible,
-  bien formé, et absent de l'article.
+- **Le montant est cherché dans l'article, et comparé en valeur** — pas en
+  caractères, et pas à l'endroit que le modèle désigne. C'est le contrôle qui
+  attrape l'hallucination coûteuse : un chiffre plausible, bien formé, et absent
+  de l'article. Les deux versions plus strictes qui l'ont précédé n'ont rejeté
+  que des extractions justes (§13.5).
 - **Le nom du joueur est vérifié sur l'article entier.** L'exiger dans la
   citation rejetait des extractions justes — la presse alterne nom et périphrase
   (« pour *l'international français* »). Sa présence dans la citation devient un
@@ -1214,10 +1216,17 @@ Trois contrôles, et un seul est verrouillé au niveau de la phrase :
   serveur ne peut pas présumer de qui lui écrit.
 
 Un rejet n'est pas un incident : c'est **la mesure**. Le taux de rejet se lit
-sans étiqueter quoi que ce soit et sert de cadran de qualité — il monte le jour
-même où un changement de modèle ou de consigne fait dériver l'extraction.
+sans étiqueter quoi que ce soit et sert de cadran de précision — il monte le
+jour même où un changement de modèle ou de consigne fait dériver l'extraction.
 
-### 13.5 Ce que trois passages réels ont corrigé
+Il ne dit rien du **rappel**, et c'est sa limite : il ne voit que ce que le
+modèle a produit, jamais ce qu'il a laissé passer. Un passage réel a manqué une
+signature libre sans qu'aucun chiffre ne bouge. D'où le second cadran, la part
+d'articles dont le modèle ne tire *ni déclaration ni rejet* : un article de L1
+peut légitimement ne parler d'aucun mouvement, mais une part qui monte est un
+oubli qui s'installe.
+
+### 13.5 Ce que quatre passages réels ont corrigé
 
 Aucun de ces défauts n'était visible sur le papier.
 
@@ -1225,7 +1234,8 @@ Aucun de ces défauts n'était visible sur le papier.
 |---|---|---|
 | 1 | **100 % de rejet** | On demandait un montant *en euros* — donc une multiplication par un million, ce qu'un 7B rate volontiers, alors qu'un parseur testé attendait à côté. Et le schéma n'offrait aucune façon légale de dire « aucun montant » : un décodeur contraint en fabrique alors un. Le modèle recopie désormais, `null` est un type valide, et la consigne dit que l'absence de montant est le cas normal. |
 | 2 | **Aucun club, posture aléatoire** | `fromClub`, `toClub` et `stance` figuraient au schéma mais nulle part dans la consigne. Un décodeur contraint omet ce qu'on ne lui demande pas et tire au hasard dans une énumération qu'on ne lui explique pas. |
-| 3 | **Une extraction juste rejetée** | « Les représentants disposent d'un accord avec l'AS Roma » et « l'OL réclame 40 M€ » sont deux phrases ; le schéma n'autorisait qu'un seul indice. `feeSentence` laisse le montant citer sa propre phrase, sans affaiblir le contrôle. |
+| 3 | **Une extraction juste rejetée** | « Les représentants disposent d'un accord avec l'AS Roma » et « l'OL réclame 40 M€ » sont deux phrases ; le schéma n'autorisait qu'un seul indice. `feeSentence` laisse le montant citer sa propre phrase. |
+| 4 | **Les deux seules extractions chiffrées rejetées**, et un oubli invisible | Le modèle normalise la notation vers celle du titre : « 40 millions d'euros » pour « 40 M€ », « 9,3 M€ » pour « 9,3 millions d'euros ». L'indice de phrase était juste dans les deux cas — c'est la comparaison littérale qui rejetait. On compare désormais des **valeurs**, et on cherche le montant dans tout l'article. Le même passage a laissé filer une signature libre sans qu'aucun chiffre ne s'en aperçoive : d'où le cadran des silences, et une consigne qui dit qu'un transfert sans montant compte autant qu'un autre. |
 
 ### 13.6 État
 
