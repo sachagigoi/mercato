@@ -47,8 +47,8 @@ function fakeExtractor(reply: (sentences: readonly string[]) => unknown[]): Extr
     prompts,
     model: "test",
     promptVersion: "1",
-    async extract(sentences) {
-      prompts.push(buildUserPrompt(sentences));
+    async extract(sentences, mentions) {
+      prompts.push(buildUserPrompt(sentences, mentions));
       return { claims: reply(sentences), raw: "" };
     },
   };
@@ -93,7 +93,8 @@ describe("runSource", () => {
     await runSource(createMaxifoot(http), extractor, { sleep: noSleep, limit: 1 });
 
     assert.ok(extractor.prompts.length > 0);
-    assert.match(extractor.prompts[0], /^\[0\] /);
+    // Plus en tête du prompt : l'entête des clubs cités le précède désormais.
+    assert.match(extractor.prompts[0], /\n\[0\] /);
     assert.match(extractor.prompts[0], /\n\[1\] /);
   });
 
@@ -215,6 +216,11 @@ describe("SYSTEM_PROMPT", () => {
     // L'absence de montant doit être présentée comme le cas normal : sans ça,
     // un décodeur contraint en fabrique un plutôt que de rendre null.
     assert.match(SYSTEM_PROMPT, /pas un échec/);
+    // Deux consignes nées de passages réels : un transfert sans montant compte
+    // (une signature libre à Brest est passée inaperçue), et un club de L1 cité
+    // est presque toujours partie au transfert (le PSG laissé à null).
+    assert.match(SYSTEM_PROMPT, /SANS montant compte autant/);
+    assert.match(SYSTEM_PROMPT, /clubs de Ligue 1 cités/);
   });
 });
 
@@ -371,5 +377,52 @@ describe("le silence du modèle", () => {
     assert.ok(report.extracted > 0);
     assert.equal(report.silent, report.extracted, "les silences ne sont pas comptés");
     assert.equal(rejectionRate(report), 0, "le taux de rejet ignore les silences — c'est voulu");
+  });
+});
+
+describe("les clubs cités passent du préfiltre au modèle", () => {
+  it("annonce les clubs de Ligue 1 en tête du prompt", async () => {
+    // Le raté le plus fréquent du modèle : laisser `fromClub` à null alors que
+    // le club vendeur est dans le titre. Sur la brève « PSG : Liverpool avance
+    // pour Barcola », il a rendu fromClub null — la déclaration est alors sortie
+    // du périmètre sans un mot. Le préfiltre connaissait pourtant déjà le PSG.
+    const extractor = fakeExtractor(() => []);
+    await runSource(createMaxifoot(fixtureFetcher()), extractor, { sleep: noSleep, limit: 1 });
+
+    assert.ok(extractor.prompts.length > 0);
+    assert.match(extractor.prompts[0], /^Clubs de Ligue 1 cités : /);
+    assert.match(extractor.prompts[0], /\n\[0\] /, "les phrases numérotées doivent suivre");
+  });
+
+  it("se passe de l'entête quand il n'y a rien à annoncer", () => {
+    assert.equal(buildUserPrompt(["Une phrase."]), "[0] Une phrase.");
+  });
+});
+
+describe("silence contre hors périmètre", () => {
+  it("ne compte pas comme muet un article dont le modèle a pointé hors de France", async () => {
+    // Deux pannes différentes, deux correctifs différents. Sur « OM : Aston
+    // Villa veut aussi Todibo », le modèle a rendu West Ham -> Aston Villa :
+    // vrai, mais l'angle marseillais est passé à la trappe. Ce n'est pas la
+    // même chose qu'un article dont il n'a rien tiré du tout.
+    const report = await runSource(
+      createMaxifoot(fixtureFetcher()),
+      fakeExtractor((sentences) => {
+        const player = playerOf(sentences);
+        return player
+          ? [{ player, fromClub: "Chelsea", toClub: "Nottingham Forest", stance: "rumeur", sentence: 0 }]
+          : [];
+      }),
+      { sleep: noSleep },
+    );
+
+    assert.ok(report.outOfScope > 0, "aucune déclaration hors périmètre produite");
+    const pointed = report.outcomes.filter((o) => o.outOfScope > 0);
+    assert.ok(pointed.length > 0);
+    assert.ok(
+      pointed.every((o) => o.claims.length === 0 && o.rejected.length === 0),
+      "cas de test mal construit",
+    );
+    assert.equal(report.silent, report.extracted - pointed.length);
   });
 });

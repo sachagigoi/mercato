@@ -74,13 +74,19 @@ function show(o: ArticleOutcome, verbose: boolean) {
   for (const c of o.claims) {
     const route = `${c.fromClubRaw ?? "?"} → ${c.toClubRaw ?? "?"}`;
     console.log(`      ✓ ${c.player} · ${route}`);
-    console.log(`        ${euros(c.feeEur)} · ${c.feeKind} · ${c.stance}${c.playerInQuote ? "" : " · nom hors citation"}`);
+    const nuance = c.qualifier === "exact" ? "" : `${c.qualifier} `;
+    console.log(`        ${nuance}${euros(c.feeEur)} · ${c.feeKind} · ${c.stance}${c.playerInQuote ? "" : " · nom hors citation"}`);
     console.log(`        « ${cut(c.quote)} »`);
     // Le montant vit souvent dans une autre phrase que le transfert. La
     // montrer permet de vérifier d'un coup d'œil que le chiffre vient bien
     // de là où le modèle le dit.
     if (c.feeQuote && c.feeQuote !== c.quote) console.log(`        montant « ${cut(c.feeQuote)} »`);
   }
+  // Une déclaration hors périmètre n'est pas un silence : le modèle a lu, il a
+  // pointé hors de France. Sur la brève « OM : Aston Villa veut aussi Todibo »,
+  // il a rendu West Ham -> Aston Villa — vrai, mais l'angle marseillais est
+  // passé à la trappe. Le distinguer d'un article muet oriente le correctif.
+  if (o.outOfScope > 0) console.log(`      ~ ${o.outOfScope} hors périmètre`);
   for (const r of o.rejected) {
     console.log(`      ✗ rejeté : ${r.reason}`);
     // Le rejet seul ne dit pas POURQUOI le modèle s'est trompé. Sans ce que

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { formatFee } from "../format.ts";
-import { resolveLigue1Club, type Club } from "../referential.ts";
+import { mentionedLigue1Clubs, resolveLigue1Club, type Club } from "../referential.ts";
 import { findAmounts } from "./prefilter.ts";
 
 /**
@@ -172,14 +172,30 @@ export function acceptClaim(raw: unknown, sentences: readonly string[]): Verdict
   const bonus = locateAmount(c.bonusText, sentences, null);
   const bonusEur = typeof bonus === "object" && bonus !== null ? bonus.eur : null;
 
+  // Un club de L1 attribué doit être cité dans l'article.
+  //
+  // Le pendant du contrôle sur le joueur et sur le montant, et il devient
+  // nécessaire maintenant que la consigne pousse le modèle à remplir les clubs
+  // plutôt qu'à les laisser à null. Une piste attribuée au mauvais club est
+  // pire qu'une piste manquée — c'est déjà pour ça que « Paris » n'est pas un
+  // alias du PSG. La comparaison porte sur l'identifiant, pas sur le libellé :
+  // le modèle peut écrire « PSG » là où l'article écrit « Paris Saint-Germain ».
+  const fromClub = resolveLigue1Club(c.fromClub);
+  const toClub = resolveLigue1Club(c.toClub);
+  const cited = new Set(mentionedLigue1Clubs(sentences.join(" ")).map((club) => club.tmId));
+  for (const club of [fromClub, toClub]) {
+    if (club && !cited.has(club.tmId))
+      return reject(`club absent de l'article : ${club.name}`, raw);
+  }
+
   return {
     ok: true,
     claim: {
       player: c.player.trim(),
       fromClubRaw: c.fromClub?.trim() || null,
       toClubRaw: c.toClub?.trim() || null,
-      fromClub: resolveLigue1Club(c.fromClub),
-      toClub: resolveLigue1Club(c.toClub),
+      fromClub,
+      toClub,
       feeEur: located ? located.eur : null,
       feeLabel: located ? formatFee(located.eur) : null,
       feeKind: c.feeKind,

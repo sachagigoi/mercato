@@ -154,6 +154,32 @@ describe("acceptClaim", () => {
     assert.equal(v.claim.feeLabel, null);
   });
 
+  it("rejette un club de L1 que l'article ne cite pas", () => {
+    // Le pendant des contrôles sur le joueur et sur le montant, devenu
+    // nécessaire depuis que la consigne pousse le modèle à remplir les clubs.
+    // Une piste attribuée au mauvais club est pire qu'une piste manquée.
+    const v = acceptClaim(claim({ fromClub: "LOSC Lille" }), ARTICLE);
+    assert.equal(v.ok, false);
+    assert.ok(!v.ok && v.rejected.reason.includes("club"));
+  });
+
+  it("accepte un club cité sous une autre forme que celle du modèle", () => {
+    // La comparaison porte sur l'identifiant, pas sur le libellé : le modèle
+    // écrit « PSG » là où l'article écrit « Paris Saint-Germain ».
+    const v = acceptClaim(claim({ fromClub: "PSG" }), ARTICLE);
+    assert.ok(v.ok);
+    assert.equal(v.claim.fromClub?.tmId, "583");
+    assert.equal(v.claim.fromClubRaw, "PSG", "le libellé brut doit être conservé");
+  });
+
+  it("laisse passer un club étranger sans le vérifier", () => {
+    // Le référentiel ne couvre que la L1 : exiger la citation d'un club qu'il
+    // ne connaît pas reviendrait à rejeter tous les transferts sortants.
+    const v = acceptClaim(claim({ toClub: "Al Hilal" }), ARTICLE);
+    assert.ok(v.ok);
+    assert.equal(v.claim.toClubRaw, "Al Hilal");
+  });
+
   it("tolère un nom partiel, comme la presse l'écrit", () => {
     // Les brèves nomment « Barcola » après l'avoir présenté une fois en entier.
     const v = acceptClaim(claim({ player: "Barcola" }), ARTICLE);

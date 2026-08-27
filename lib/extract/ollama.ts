@@ -7,8 +7,15 @@ import { OLLAMA_FORMAT } from "./claims.ts";
  * teste intégralement contre des réponses enregistrées, sans modèle ni réseau.
  */
 export interface Extractor {
-  /** Rend la sortie brute du modèle. La validation est le travail du garde-fou. */
-  extract(sentences: readonly string[]): Promise<{ claims: unknown[]; raw: string }>;
+  /**
+   * Rend la sortie brute du modèle. La validation est le travail du garde-fou.
+   *
+   * `mentions` est la liste des clubs de Ligue 1 que le préfiltre a déjà
+   * trouvés dans le texte. On la calculait sans s'en servir ; la donner au
+   * modèle coûte cinq tokens et lui évite le raté le plus fréquent — laisser
+   * `fromClub` à null alors que le club vendeur est dans le titre.
+   */
+  extract(sentences: readonly string[], mentions?: readonly string[]): Promise<{ claims: unknown[]; raw: string }>;
   readonly model: string;
   /** Version de l'extraction — consigne **et** garde-fou. Stockée avec chaque
    *  déclaration : sans elle, impossible d'expliquer pourquoi une carte
@@ -16,7 +23,7 @@ export interface Extractor {
   readonly promptVersion: string;
 }
 
-export const PROMPT_VERSION = "5";
+export const PROMPT_VERSION = "6";
 
 /**
  * Consigne système, volontairement courte et **strictement identique** d'un
@@ -40,6 +47,10 @@ export const SYSTEM_PROMPT = [
   "player   : le nom du joueur.",
   "fromClub : le club qu'il quitte. null si l'article ne le dit pas.",
   "toClub   : le club où il arrive. null si l'article ne le dit pas.",
+  "           On te donne les clubs de Ligue 1 cités : la brève vient d'un flux",
+  "           mercato français, l'un d'eux est presque toujours partie au",
+  "           transfert. Ne mets null que si le texte ne permet pas de trancher.",
+  "           Si deux clubs se disputent le joueur, rends UNE ENTRÉE PAR CLUB.",
   "feeText  : le montant RECOPIÉ MOT POUR MOT de cette phrase — « 100 M€ »,",
   "           « 18 millions d'euros ». Ne convertis rien, ne calcule rien.",
   "           null si la phrase ne contient aucun montant.",
@@ -61,8 +72,17 @@ export const SYSTEM_PROMPT = [
   "d'aucun mouvement de joueur.",
 ].join("\n");
 
-export const buildUserPrompt = (sentences: readonly string[]) =>
-  sentences.map((s, i) => `[${i}] ${s}`).join("\n");
+export const buildUserPrompt = (
+  sentences: readonly string[],
+  mentions: readonly string[] = [],
+) => {
+  const numbered = sentences.map((s, i) => `[${i}] ${s}`).join("\n");
+  // En tête, pas en queue : sur un CPU, ce que le modèle lit en dernier pèse
+  // moins que ce qu'il lit avant le texte à analyser.
+  return mentions.length > 0
+    ? `Clubs de Ligue 1 cités : ${mentions.join(", ")}.\n\n${numbered}`
+    : numbered;
+};
 
 export type OllamaOptions = {
   endpoint?: string;
@@ -80,7 +100,7 @@ export function createOllamaExtractor(options: OllamaOptions = {}): Extractor {
     model,
     promptVersion: PROMPT_VERSION,
 
-    async extract(sentences) {
+    async extract(sentences, mentions) {
       const res = await doFetch(`${endpoint}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -103,7 +123,7 @@ export function createOllamaExtractor(options: OllamaOptions = {}): Extractor {
           },
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: buildUserPrompt(sentences) },
+            { role: "user", content: buildUserPrompt(sentences, mentions) },
           ],
         }),
       });

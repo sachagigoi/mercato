@@ -18,6 +18,15 @@ export type ArticleOutcome = {
   skipped: "hors-ligue-1" | "corps-vide" | "deja-vu" | null;
   claims: AcceptedClaim[];
   rejected: Rejected[];
+  /**
+   * Déclarations justes mais sans club de L1, sur CET article.
+   *
+   * Comptées par article et pas seulement en total : « le modèle a lu et a
+   * pointé hors de France » et « le modèle n'a rien vu » sont deux pannes
+   * différentes, qui appellent deux correctifs différents. Les confondre m'a
+   * coûté un diagnostic à la main sur la sortie brute.
+   */
+  outOfScope: number;
   /** Durée de l'appel au modèle. Le chiffre qui dit si la cadence tient. */
   ms: number;
   /**
@@ -41,9 +50,10 @@ export type RunReport = {
   outOfScope: number;
   /**
    * Articles soumis au modèle dont il n'a **rien** tiré : ni déclaration, ni
-   * rejet. Le cadran qui manquait — le taux de rejet mesure la précision, et
-   * reste muet sur les oublis. Un passage réel a laissé filer une signature
-   * libre à Brest sans qu'aucun chiffre ne s'en aperçoive.
+   * rejet, ni même une déclaration hors périmètre. Le cadran qui manquait — le
+   * taux de rejet mesure la précision, et reste muet sur les oublis. Un passage
+   * réel a laissé filer une signature libre à Brest sans qu'aucun chiffre ne
+   * s'en aperçoive.
    *
    * Un silence n'est pas une faute en soi : un article de L1 peut ne parler
    * d'aucun mouvement. C'est sa PART qui alerte.
@@ -114,7 +124,7 @@ export async function runSource(
       const outcome: ArticleOutcome = {
         article,
         skipped: gate.reason === "ok" ? null : gate.reason,
-        claims: [], rejected: [], ms: 0, raw: "", sentences: gate.sentences,
+        claims: [], rejected: [], outOfScope: 0, ms: 0, raw: "", sentences: gate.sentences,
       };
       report.outcomes.push(outcome);
       options.onArticle?.(outcome);
@@ -125,7 +135,10 @@ export async function runSource(
     let raw: unknown[] = [];
     let rawText = "";
     try {
-      ({ claims: raw, raw: rawText } = await extractor.extract(gate.sentences));
+      ({ claims: raw, raw: rawText } = await extractor.extract(
+        gate.sentences,
+        gate.mentions.map((c) => c.name),
+      ));
       report.extracted += 1;
     } catch (cause) {
       if (report.errors.length < MAX_REPORTED_ERRORS) {
@@ -138,6 +151,7 @@ export async function runSource(
 
     const claims: AcceptedClaim[] = [];
     const rejected: Rejected[] = [];
+    let outOfScope = 0;
     for (const candidate of raw) {
       const verdict = acceptClaim(candidate, gate.sentences);
       if (!verdict.ok) {
@@ -149,6 +163,7 @@ export async function runSource(
       // qui mesure la qualité du modèle.
       if (!inScope(verdict.claim)) {
         report.outOfScope += 1;
+        outOfScope += 1;
         continue;
       }
       claims.push(verdict.claim);
@@ -156,10 +171,11 @@ export async function runSource(
 
     report.claims += claims.length;
     report.rejected += rejected.length;
-    if (claims.length === 0 && rejected.length === 0) report.silent += 1;
+    if (claims.length === 0 && rejected.length === 0 && outOfScope === 0) report.silent += 1;
 
     const outcome: ArticleOutcome = {
-      article, skipped: null, claims, rejected, ms, raw: rawText, sentences: gate.sentences,
+      article, skipped: null, claims, rejected, outOfScope, ms,
+      raw: rawText, sentences: gate.sentences,
     };
     report.outcomes.push(outcome);
     options.onArticle?.(outcome);

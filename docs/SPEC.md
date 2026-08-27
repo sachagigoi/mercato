@@ -1226,7 +1226,7 @@ d'articles dont le modèle ne tire *ni déclaration ni rejet* : un article de L1
 peut légitimement ne parler d'aucun mouvement, mais une part qui monte est un
 oubli qui s'installe.
 
-### 13.5 Ce que quatre passages réels ont corrigé
+### 13.5 Ce que cinq passages réels ont corrigé
 
 Aucun de ces défauts n'était visible sur le papier.
 
@@ -1236,6 +1236,16 @@ Aucun de ces défauts n'était visible sur le papier.
 | 2 | **Aucun club, posture aléatoire** | `fromClub`, `toClub` et `stance` figuraient au schéma mais nulle part dans la consigne. Un décodeur contraint omet ce qu'on ne lui demande pas et tire au hasard dans une énumération qu'on ne lui explique pas. |
 | 3 | **Une extraction juste rejetée** | « Les représentants disposent d'un accord avec l'AS Roma » et « l'OL réclame 40 M€ » sont deux phrases ; le schéma n'autorisait qu'un seul indice. `feeSentence` laisse le montant citer sa propre phrase. |
 | 4 | **Les deux seules extractions chiffrées rejetées**, et un oubli invisible | Le modèle normalise la notation vers celle du titre : « 40 millions d'euros » pour « 40 M€ », « 9,3 M€ » pour « 9,3 millions d'euros ». L'indice de phrase était juste dans les deux cas — c'est la comparaison littérale qui rejetait. On compare désormais des **valeurs**, et on cherche le montant dans tout l'article. Le même passage a laissé filer une signature libre sans qu'aucun chiffre ne s'en aperçoive : d'où le cadran des silences, et une consigne qui dit qu'un transfert sans montant compte autant qu'un autre. |
+
+| 5 | **Zéro rejet, et deux déclarations sur six attendues** | Précision parfaite, rappel médiocre — la panne inverse des précédentes. Sur « PSG : Liverpool avance pour Barcola », `fromClub` à null alors que le PSG est dans le titre : la déclaration sort du périmètre sans un mot. Le préfiltre connaissait déjà le club et ne s'en servait pas. La consigne annonce désormais les clubs de L1 cités, et un garde-fou symétrique refuse un club attribué que l'article ne cite pas. |
+
+**Ce que la série enseigne** : les trois premiers défauts venaient du schéma,
+les deux suivants de ce que la consigne *ne dit pas*. Un décodeur contraint ne
+se tient pas mal — il fait exactement ce qu'on lui a demandé, y compris quand on
+ne lui a rien demandé. Et chaque tour de vis sur le rappel appelle son garde-fou
+sur la précision : pousser le modèle à remplir les clubs sans vérifier qu'ils
+sont dans le texte échangerait un oubli contre une erreur d'attribution, ce qui
+serait un mauvais échange.
 
 ### 13.6 État
 

@@ -94,7 +94,7 @@ qui doit inquiéter, c'est un taux **durablement** au-dessus de 30 %.
 > réel a manqué une signature libre à Brest sans qu'aucun chiffre ne bouge :
 > ni déclaration, ni rejet, donc rien à voir. D'où la colonne des silences.
 
-> **Quatre passages réels ont fait évoluer l'extraction**, chacun sur un défaut
+> **Cinq passages réels ont fait évoluer l'extraction**, chacun sur un défaut
 > que le papier n'aurait pas montré.
 >
 > **Le premier a rejeté 100 %.** Deux causes, toutes deux de
@@ -128,6 +128,16 @@ qui doit inquiéter, c'est un taux **durablement** au-dessus de 30 %.
 > Le même passage a laissé filer une signature libre sans qu'aucun chiffre ne
 > s'en aperçoive — d'où la ligne des silences, et une consigne qui dit
 > maintenant qu'un transfert sans montant compte autant qu'un autre.
+>
+> **Le cinquième n'a rien rejeté du tout — et c'est le pire des cinq.** Zéro
+> rejet, mais deux déclarations retenues là où les cinq brèves en portaient
+> six. Sur « PSG : Liverpool avance pour Barcola », le modèle a rendu
+> `fromClub: null` alors que le PSG est dans le titre : la déclaration est
+> sortie du périmètre sans un mot. Le préfiltre connaissait pourtant déjà le
+> club — il le calculait sans s'en servir. La consigne annonce désormais les
+> clubs de L1 cités, et un garde-fou symétrique refuse un club attribué que
+> l'article ne cite pas : pousser le modèle à remplir appelle un contrôle sur
+> ce qu'il remplit.
 
 ## 4. Comparer deux modèles
 
