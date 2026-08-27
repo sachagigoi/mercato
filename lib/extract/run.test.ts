@@ -221,6 +221,11 @@ describe("SYSTEM_PROMPT", () => {
     // est presque toujours partie au transfert (le PSG laissé à null).
     assert.match(SYSTEM_PROMPT, /SANS montant compte autant/);
     assert.match(SYSTEM_PROMPT, /clubs de Ligue 1 cités/);
+    // Sur trois brèves d'affilée, le modèle a laissé `fromClub` à null quand
+    // le club d'origine était étranger. « Le club qu'il quitte » demande de
+    // trancher un sens ; « le club où il joue aujourd'hui » est une question
+    // mécanique, et c'est celle que la consigne pose désormais.
+    assert.match(SYSTEM_PROMPT, /joue AUJOURD'HUI/);
   });
 });
 

@@ -708,6 +708,11 @@ Ni Vercel, ni Render.
   le recharge. Trop fragile pour une brique qu'on veut oublier.
 - **Render** : les *background workers* et les *cron jobs* y sont payants (7 $/mois). On vient de
   retirer Render pour de bonnes raisons, le réintroduire pour ça serait un mauvais échange.
+
+Un corollaire, tiré du sixième : **ce que le code peut trancher exactement, le
+code le tranche.** Le champ `qualifier` a passé six passages à sortir `exact`
+parce qu'on le demandait au modèle, alors que « environ » et « au moins »
+figurent dans la phrase, juste avant le chiffre qu'on vient d'y localiser.
 - **GitHub Actions** *(retenu)* : gratuit, timeout de 6 h, runner à 16 Go, secrets intégrés, et on y
   installe ce qu'on veut. Le job n'est pas critique en latence — la carte s'affiche déjà avec le
   masque circulaire en attendant. Limites connues et acceptées : les crons GitHub sont *best effort*
@@ -1226,7 +1231,7 @@ d'articles dont le modèle ne tire *ni déclaration ni rejet* : un article de L1
 peut légitimement ne parler d'aucun mouvement, mais une part qui monte est un
 oubli qui s'installe.
 
-### 13.5 Ce que cinq passages réels ont corrigé
+### 13.5 Ce que six passages réels ont corrigé
 
 Aucun de ces défauts n'était visible sur le papier.
 
@@ -1238,6 +1243,8 @@ Aucun de ces défauts n'était visible sur le papier.
 | 4 | **Les deux seules extractions chiffrées rejetées**, et un oubli invisible | Le modèle normalise la notation vers celle du titre : « 40 millions d'euros » pour « 40 M€ », « 9,3 M€ » pour « 9,3 millions d'euros ». L'indice de phrase était juste dans les deux cas — c'est la comparaison littérale qui rejetait. On compare désormais des **valeurs**, et on cherche le montant dans tout l'article. Le même passage a laissé filer une signature libre sans qu'aucun chiffre ne s'en aperçoive : d'où le cadran des silences, et une consigne qui dit qu'un transfert sans montant compte autant qu'un autre. |
 
 | 5 | **Zéro rejet, et deux déclarations sur six attendues** | Précision parfaite, rappel médiocre — la panne inverse des précédentes. Sur « PSG : Liverpool avance pour Barcola », `fromClub` à null alors que le PSG est dans le titre : la déclaration sort du périmètre sans un mot. Le préfiltre connaissait déjà le club et ne s'en servait pas. La consigne annonce désormais les clubs de L1 cités, et un garde-fou symétrique refuse un club attribué que l'article ne cite pas. |
+
+| 6 | **Le rappel remonte, `fromClub` résiste** | Sur les mêmes cinq brèves : trois déclarations au lieu de deux, plus aucun silence. Mais `fromClub` reste à null dans les trois cas où le club d'origine est étranger. « Le club qu'il quitte » demande de trancher un sens ; la consigne demande désormais « le club où il joue aujourd'hui ». Le champ `qualifier`, lui, sortait toujours à `exact` — la nuance (« environ », « au moins ») se lit maintenant dans le texte juste avant le chiffre, ce que le code fait mieux et gratuitement. |
 
 **Ce que la série enseigne** : les trois premiers défauts venaient du schéma,
 les deux suivants de ce que la consigne *ne dit pas*. Un décodeur contraint ne

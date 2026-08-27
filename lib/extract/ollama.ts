@@ -23,7 +23,31 @@ export interface Extractor {
   readonly promptVersion: string;
 }
 
-export const PROMPT_VERSION = "6";
+export const PROMPT_VERSION = "7";
+
+/**
+ * Le modèle demandé n'est pas installé sur cette machine.
+ *
+ * Distincte d'une erreur d'extraction ordinaire, et pour une raison concrète :
+ * elle ne se réparera pas à l'article suivant. Un passage réel a produit cinq
+ * fois « Ollama : HTTP 404 » — cinq pages téléchargées chez la source pour
+ * rien, et un message qui ne disait pas quoi faire.
+ */
+export class MissingModelError extends Error {
+  readonly model: string;
+
+  // Champ déclaré puis assigné, et non une propriété de paramètre : celles-ci
+  // ne sont pas du typage mais de la génération de code, et `--experimental-
+  // strip-types` les refuse à l'exécution — là où `tsc` les accepte.
+  constructor(model: string) {
+    super(
+      `Modèle « ${model} » absent de cette machine.\n` +
+        `  Installe-le d'abord :  ollama pull ${model}`,
+    );
+    this.model = model;
+    this.name = "MissingModelError";
+  }
+}
 
 /**
  * Consigne système, volontairement courte et **strictement identique** d'un
@@ -45,11 +69,13 @@ export const SYSTEM_PROMPT = [
   "feeSentence : le NUMÉRO de la phrase qui contient le montant, si ce n'est",
   "           pas la même. null sinon.",
   "player   : le nom du joueur.",
-  "fromClub : le club qu'il quitte. null si l'article ne le dit pas.",
-  "toClub   : le club où il arrive. null si l'article ne le dit pas.",
+  "fromClub : le club où le joueur joue AUJOURD'HUI, celui qu'il quitterait.",
+  "           Un joueur en a toujours un, et l'article le nomme presque",
+  "           toujours — y compris quand c'est un club étranger. null doit",
+  "           rester rare.",
+  "toClub   : le club qui le veut, ou qui vient de le recruter.",
   "           On te donne les clubs de Ligue 1 cités : la brève vient d'un flux",
-  "           mercato français, l'un d'eux est presque toujours partie au",
-  "           transfert. Ne mets null que si le texte ne permet pas de trancher.",
+  "           mercato français, l'un d'eux est presque toujours l'un des deux.",
   "           Si deux clubs se disputent le joueur, rends UNE ENTRÉE PAR CLUB.",
   "feeText  : le montant RECOPIÉ MOT POUR MOT de cette phrase — « 100 M€ »,",
   "           « 18 millions d'euros ». Ne convertis rien, ne calcule rien.",
@@ -128,6 +154,10 @@ export function createOllamaExtractor(options: OllamaOptions = {}): Extractor {
         }),
       });
 
+      // 404 sur /api/chat ne veut pas dire « endpoint introuvable » : Ollama
+      // le rend quand le MODÈLE n'existe pas localement. Le message brut
+      // envoyait chercher au mauvais endroit.
+      if (res.status === 404) throw new MissingModelError(model);
       if (!res.ok) throw new Error(`Ollama : HTTP ${res.status}`);
 
       const body = (await res.json()) as { message?: { content?: string } };

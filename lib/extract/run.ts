@@ -1,7 +1,7 @@
 import type { Article, PressSource } from "../articles.ts";
 import type { PublishInput } from "../declarations.ts";
 import { acceptClaim, inScope, type AcceptedClaim, type Rejected } from "./claims.ts";
-import type { Extractor } from "./ollama.ts";
+import { MissingModelError, type Extractor } from "./ollama.ts";
 import { prefilter } from "./prefilter.ts";
 
 /**
@@ -141,6 +141,9 @@ export async function runSource(
       ));
       report.extracted += 1;
     } catch (cause) {
+      // Un modèle absent ne se répare pas à l'article suivant : insister
+      // téléchargerait le reste du flux chez la source pour rien.
+      if (cause instanceof MissingModelError) throw cause;
       if (report.errors.length < MAX_REPORTED_ERRORS) {
         report.errors.push(`extraction ${item.url} : ${cause instanceof Error ? cause.message : "erreur"}`);
       }

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import { parseArticle, parseFeed } from "../sources/maxifoot.ts";
-import { findAmounts, prefilter, splitSentences } from "./prefilter.ts";
+import { findAmounts, prefilter, qualifierNear, splitSentences } from "./prefilter.ts";
 
 const raw = (name: string) => readFileSync(new URL(`../sources/__fixtures__/${name}`, import.meta.url));
 const article = (n: number) =>
@@ -116,5 +116,39 @@ describe("splitSentences — phrases recollées", () => {
     // avant le point est ce qui l'en distingue.
     assert.equal(splitSentences("Selon M.Dupont, le deal avance.").length, 1);
     assert.equal(splitSentences("Un chèque de 9,3 M€ est évoqué.").length, 1);
+  });
+});
+
+describe("qualifierNear", () => {
+  const nuanceOf = (text: string) => {
+    const [amount] = findAmounts(text);
+    assert.ok(amount, `aucun montant dans « ${text} »`);
+    return qualifierNear(text, amount.at);
+  };
+
+  it("lit les nuances que le modèle ne remplit jamais", () => {
+    // Deux passages réels : « environ 35 millions d'euros » et « au moins
+    // 25 millions d'euros » sont tous deux ressortis du modèle en `exact`.
+    assert.equal(nuanceOf("les Black Cats pourraient débourser environ 35 millions d'euros"), "environ");
+    assert.equal(nuanceOf("Contraint de vendre pour au moins 25 millions d’euros"), "minimum");
+    assert.equal(nuanceOf("une offre pouvant aller jusqu'à 40 M€"), "maximum");
+    assert.equal(nuanceOf("aux alentours de 12 M€"), "environ");
+    assert.equal(nuanceOf("plus de 8 millions d'euros"), "minimum");
+  });
+
+  it("ne voit pas de nuance là où il n'y en a pas", () => {
+    // Inventer « environ » sur un chiffre ferme serait pire que de n'en
+    // afficher aucun : ça ferait douter d'un montant qui ne le mérite pas.
+    assert.equal(nuanceOf("le LOSC a annoncé le transfert pour 100 M€"), null);
+    assert.equal(nuanceOf("l'OL réclame 40 M€ pour céder son ailier"), null);
+  });
+
+  it("ne regarde pas au-delà de la phrase précédente", () => {
+    // La fenêtre est courte exprès : « environ » vingt mots plus tôt ne
+    // qualifie pas ce chiffre-ci.
+    assert.equal(
+      nuanceOf("Environ, disait-il, mais le club a finalement annoncé un transfert sec de 30 M€"),
+      null,
+    );
   });
 });

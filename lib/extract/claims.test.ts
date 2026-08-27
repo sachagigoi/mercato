@@ -146,6 +146,29 @@ describe("acceptClaim", () => {
     }
   });
 
+  it("lit la nuance dans le texte, contre l'avis du modèle", () => {
+    // Le modèle rend « exact » quoi qu'il arrive — deux passages réels l'ont
+    // montré sur « environ 35 M€ » et « au moins 25 M€ ». Le texte, lui, le
+    // dit juste avant le chiffre, et le code sait le lire.
+    const nuanced = splitSentences(
+      "PSG : Liverpool optimiste pour Barcola. " +
+        "Un transfert de Bradley Barcola est évoqué. " +
+        "Les Reds seraient prêts à mettre environ 70 M€ sur la table.",
+    );
+    const v = acceptClaim(claim({ qualifier: "exact", sentence: 1 }), nuanced);
+    assert.ok(v.ok);
+    assert.equal(v.claim.qualifier, "environ");
+    assert.equal(v.claim.feeEur, 70_000_000);
+  });
+
+  it("garde la valeur du modèle quand le texte ne nuance rien", () => {
+    // Repli et non écrasement : le vocabulaire d'un journaliste peut sortir de
+    // ce que le code sait lire, et le modèle reste alors la meilleure source.
+    const v = acceptClaim(claim({ qualifier: "minimum" }), ARTICLE);
+    assert.ok(v.ok);
+    assert.equal(v.claim.qualifier, "minimum");
+  });
+
   it("accepte une déclaration sans montant", () => {
     // Un club qui se positionne fait vivre une piste même sans chiffre.
     const v = acceptClaim(claim({ feeText: null, sentence: 1, feeKind: "inconnu" }), ARTICLE);

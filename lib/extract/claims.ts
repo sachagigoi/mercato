@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { formatFee } from "../format.ts";
 import { mentionedLigue1Clubs, resolveLigue1Club, type Club } from "../referential.ts";
-import { findAmounts } from "./prefilter.ts";
+import { findAmounts, qualifierNear } from "./prefilter.ts";
 
 /**
  * Ce que le modèle rend, et ce qu'on accepte d'en garder.
@@ -199,7 +199,10 @@ export function acceptClaim(raw: unknown, sentences: readonly string[]): Verdict
       feeEur: located ? located.eur : null,
       feeLabel: located ? formatFee(located.eur) : null,
       feeKind: c.feeKind,
-      qualifier: c.qualifier,
+      // La nuance lue dans le texte l'emporte sur celle du modèle, qui rend
+      // « exact » quoi qu'il arrive. Sa valeur reste le repli quand le
+      // vocabulaire du journaliste sort de ce que le code sait lire.
+      qualifier: located?.qualifier ?? c.qualifier,
       bonusEur,
       stance: c.stance,
       quote,
@@ -212,7 +215,7 @@ export function acceptClaim(raw: unknown, sentences: readonly string[]): Verdict
 const normalized = (s: string) =>
   s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
-type Located = { eur: number; sentence: number };
+type Located = { eur: number; sentence: number; qualifier: (typeof QUALIFIERS)[number] | null };
 
 /**
  * Localise dans l'article le montant que le modèle annonce.
@@ -254,20 +257,25 @@ function locateAmount(
   const [parsed] = findAmounts(value);
   if (!parsed) return "illisible";
 
-  const matches = sentences.flatMap((s, i) =>
-    findAmounts(s).some((a) => a.eur === parsed.eur) ? [i] : [],
-  );
+  // La nuance se lit dans la phrase où le montant vit réellement, pas dans
+  // celle que le modèle désigne : « environ » précède le chiffre, pas la
+  // mention du transfert.
+  const matches = sentences.flatMap((s, i) => {
+    const hit = findAmounts(s).find((a) => a.eur === parsed.eur);
+    return hit ? [{ sentence: i, qualifier: qualifierNear(s, hit.at) }] : [];
+  });
   if (matches.length === 0) return "absent";
 
   // L'indice du modèle ne sert plus qu'à départager, quand la même valeur
   // revient plusieurs fois. Il ne peut plus faire rejeter quoi que ce soit.
-  if (hint != null && matches.includes(hint)) return { eur: parsed.eur, sentence: hint };
+  const chosen =
+    (hint != null ? matches.find((m) => m.sentence === hint) : undefined) ??
+    // À défaut, le corps plutôt que le titre : la phrase 0 est le titre, qui
+    // résume au lieu de rapporter — et qui abrège les nuances.
+    matches.find((m) => m.sentence > 0) ??
+    matches[0];
 
-  // À défaut, le corps plutôt que le titre : la phrase 0 est le titre, qui
-  // résume au lieu de rapporter. Les trois extractions du dernier passage réel
-  // citaient toutes le titre — c'est vrai, mais ça n'a pas valeur de preuve.
-  const body = matches.find((i) => i > 0);
-  return { eur: parsed.eur, sentence: body ?? matches[0] };
+  return { eur: parsed.eur, sentence: chosen.sentence, qualifier: chosen.qualifier };
 }
 
 /**

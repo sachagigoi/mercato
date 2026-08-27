@@ -31,7 +31,12 @@ const SCALE: { test: RegExp; factor: number }[] = [
   { test: /^€$/, factor: 1 },
 ];
 
-export type Amount = { eur: number; text: string };
+export type Amount = {
+  eur: number;
+  text: string;
+  /** Position dans le texte. Sert à lire la nuance qui précède le chiffre. */
+  at: number;
+};
 
 /** Tous les montants d'un texte, avec la forme littérale rencontrée. */
 export function findAmounts(text: string): Amount[] {
@@ -42,9 +47,36 @@ export function findAmounts(text: string): Amount[] {
     const unit = m[2].trim();
     const scale = SCALE.find((s) => s.test.test(unit));
     if (!scale) continue;
-    out.push({ eur: Math.round(value * scale.factor), text: m[0].trim() });
+    out.push({ eur: Math.round(value * scale.factor), text: m[0].trim(), at: m.index });
   }
   return out;
+}
+
+/**
+ * Nuances de montant, lues dans le texte qui précède le chiffre.
+ *
+ * Le modèle a le champ `qualifier` depuis le début et ne le remplit jamais :
+ * sur deux passages réels, « environ 35 millions d'euros » et « au moins
+ * 25 millions d'euros » sont tous deux ressortis en `exact`. Ce n'est pas
+ * anodin sur un produit qui affiche de l'argent — « au moins 25 M€ » et
+ * « 25 M€ » ne disent pas la même chose.
+ *
+ * Le lire dans le texte plutôt que le demander au modèle suit la règle qui
+ * porte tout le reste : ce que le code peut trancher exactement, le code le
+ * tranche. C'est déterministe, testable, et ça ne coûte pas un token.
+ */
+const NUANCES: { test: RegExp; qualifier: "environ" | "minimum" | "maximum" }[] = [
+  { test: /\b(environ|autour de|aux alentours de|pr[eè]s de|quelque|estim[ée]e? [àa])\s*$/i, qualifier: "environ" },
+  { test: /\b(au moins|minimum|plus de|pas moins de|sup[ée]rieure? [àa])\s*$/i, qualifier: "minimum" },
+  { test: /\b(jusqu'[àa]|jusqu’[àa]|au maximum|maximum|tout au plus|moins de)\s*$/i, qualifier: "maximum" },
+];
+
+/** Fenêtre de lecture avant le chiffre. Assez pour « aux alentours de ». */
+const NUANCE_WINDOW = 30;
+
+export function qualifierNear(text: string, at: number): "environ" | "minimum" | "maximum" | null {
+  const before = text.slice(Math.max(0, at - NUANCE_WINDOW), at);
+  return NUANCES.find((n) => n.test.test(before))?.qualifier ?? null;
 }
 
 /**

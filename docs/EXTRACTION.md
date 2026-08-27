@@ -94,7 +94,7 @@ qui doit inquiéter, c'est un taux **durablement** au-dessus de 30 %.
 > réel a manqué une signature libre à Brest sans qu'aucun chiffre ne bouge :
 > ni déclaration, ni rejet, donc rien à voir. D'où la colonne des silences.
 
-> **Cinq passages réels ont fait évoluer l'extraction**, chacun sur un défaut
+> **Six passages réels ont fait évoluer l'extraction**, chacun sur un défaut
 > que le papier n'aurait pas montré.
 >
 > **Le premier a rejeté 100 %.** Deux causes, toutes deux de
@@ -138,14 +138,33 @@ qui doit inquiéter, c'est un taux **durablement** au-dessus de 30 %.
 > clubs de L1 cités, et un garde-fou symétrique refuse un club attribué que
 > l'article ne cite pas : pousser le modèle à remplir appelle un contrôle sur
 > ce qu'il remplit.
+>
+> **Le sixième a mesuré ce que ça donne**, sur les mêmes cinq brèves : trois
+> déclarations au lieu de deux, plus aucun silence, et Terrier enfin rattrapé.
+> Mais `fromClub` reste à null dans les trois cas où le club d'origine est
+> étranger — le PSG au titre d'une brève, et le modèle ne le voit pas. « Le
+> club qu'il quitte » demande de trancher un sens ; la consigne demande
+> désormais « le club où il joue aujourd'hui », question mécanique. Le même
+> passage a confirmé que le champ `qualifier` ne sert à rien tel quel : le
+> modèle rend `exact` sur « environ 35 millions » comme sur « au moins 25
+> millions ». La nuance se lit maintenant dans le texte, juste avant le
+> chiffre — déterministe, testé, et gratuit.
 
 ## 4. Comparer deux modèles
 
-Le même flux, deux modèles, sur les mêmes articles :
+Le même flux, deux modèles, sur les mêmes articles. **Installe le second
+d'abord** — sans ça Ollama rend un 404 par article, et le passage s'arrête :
 
 ```bash
-npm run extract -- --dry-run --model qwen2.5:7b-instruct-q4_K_M
-npm run extract -- --dry-run --model qwen2.5:3b-instruct-q4_K_M
+ollama pull qwen2.5:3b-instruct-q4_K_M
+
+# Le journal empêche de relire les mêmes brèves : c'est justement ce qu'on veut
+# ici. Une comparaison sur deux corpus différents ne compare rien.
+rm -f .mercato-seen.json
+
+npm run extract -- --dry-run --model qwen2.5:7b-instruct-q4_K_M --limit 5
+rm -f .mercato-seen.json
+npm run extract -- --dry-run --model qwen2.5:3b-instruct-q4_K_M --limit 5
 ```
 
 Le 3B est ~2,5× plus rapide. S'il tient le taux de rejet du 7B sur de
