@@ -32,6 +32,99 @@ export type Database = {
         }
         Relationships: []
       }
+      declarations: {
+        Row: {
+          article_id: string
+          bonus_eur: number | null
+          claim_key: string
+          created_at: string
+          fee_eur: number | null
+          fee_kind: Database["public"]["Enums"]["claim_fee_kind"]
+          fee_label: string | null
+          fee_quote: string | null
+          from_club_key: string | null
+          from_club_name: string | null
+          id: string
+          model: string
+          player_in_quote: boolean
+          player_name: string
+          player_normalized: string
+          prompt_version: string
+          published_at: string
+          qualifier: Database["public"]["Enums"]["claim_qualifier"]
+          quote: string
+          stance: Database["public"]["Enums"]["claim_stance"]
+          to_club_key: string | null
+          to_club_name: string | null
+          transfer_id: string | null
+        }
+        Insert: {
+          article_id: string
+          bonus_eur?: number | null
+          claim_key: string
+          created_at?: string
+          fee_eur?: number | null
+          fee_kind?: Database["public"]["Enums"]["claim_fee_kind"]
+          fee_label?: string | null
+          fee_quote?: string | null
+          from_club_key?: string | null
+          from_club_name?: string | null
+          id?: string
+          model: string
+          player_in_quote?: boolean
+          player_name: string
+          player_normalized: string
+          prompt_version: string
+          published_at: string
+          qualifier?: Database["public"]["Enums"]["claim_qualifier"]
+          quote: string
+          stance?: Database["public"]["Enums"]["claim_stance"]
+          to_club_key?: string | null
+          to_club_name?: string | null
+          transfer_id?: string | null
+        }
+        Update: {
+          article_id?: string
+          bonus_eur?: number | null
+          claim_key?: string
+          created_at?: string
+          fee_eur?: number | null
+          fee_kind?: Database["public"]["Enums"]["claim_fee_kind"]
+          fee_label?: string | null
+          fee_quote?: string | null
+          from_club_key?: string | null
+          from_club_name?: string | null
+          id?: string
+          model?: string
+          player_in_quote?: boolean
+          player_name?: string
+          player_normalized?: string
+          prompt_version?: string
+          published_at?: string
+          qualifier?: Database["public"]["Enums"]["claim_qualifier"]
+          quote?: string
+          stance?: Database["public"]["Enums"]["claim_stance"]
+          to_club_key?: string | null
+          to_club_name?: string | null
+          transfer_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "declarations_article_id_fkey"
+            columns: ["article_id"]
+            isOneToOne: false
+            referencedRelation: "press_articles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "declarations_transfer_id_fkey"
+            columns: ["transfer_id"]
+            isOneToOne: false
+            referencedRelation: "transfers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       media_cache: {
         Row: {
           af_id: number | null
@@ -68,6 +161,42 @@ export type Database = {
           kind?: string
           miss_count?: number
           name_normalized?: string
+        }
+        Relationships: []
+      }
+      press_articles: {
+        Row: {
+          first_seen_at: string
+          guid: string
+          id: string
+          last_extracted_at: string
+          published_at: string
+          source: string
+          source_tier: number
+          title: string
+          url: string
+        }
+        Insert: {
+          first_seen_at?: string
+          guid: string
+          id?: string
+          last_extracted_at?: string
+          published_at: string
+          source: string
+          source_tier?: number
+          title: string
+          url: string
+        }
+        Update: {
+          first_seen_at?: string
+          guid?: string
+          id?: string
+          last_extracted_at?: string
+          published_at?: string
+          source?: string
+          source_tier?: number
+          title?: string
+          url?: string
         }
         Relationships: []
       }
@@ -180,6 +309,15 @@ export type Database = {
       normalize_name: { Args: { value: string }; Returns: string }
     }
     Enums: {
+      claim_fee_kind:
+        | "transfert"
+        | "pret"
+        | "pret_avec_option"
+        | "clause"
+        | "libre"
+        | "inconnu"
+      claim_qualifier: "exact" | "environ" | "minimum" | "maximum"
+      claim_stance: "rumeur" | "discussions" | "accord" | "officiel" | "dementi"
       transfer_type: "TRANSFER" | "RUMOUR" | "EXTENSION"
     }
     CompositeTypes: {
@@ -308,6 +446,16 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      claim_fee_kind: [
+        "transfert",
+        "pret",
+        "pret_avec_option",
+        "clause",
+        "libre",
+        "inconnu",
+      ],
+      claim_qualifier: ["exact", "environ", "minimum", "maximum"],
+      claim_stance: ["rumeur", "discussions", "accord", "officiel", "dementi"],
       transfer_type: ["TRANSFER", "RUMOUR", "EXTENSION"],
     },
   },
@@ -318,6 +466,8 @@ export const Constants = {
 export type Transfer = Database["public"]["Tables"]["transfers"]["Row"]
 export type TransferInsert = Database["public"]["Tables"]["transfers"]["Insert"]
 export type MediaCache = Database["public"]["Tables"]["media_cache"]["Row"]
+export type PressArticle = Database["public"]["Tables"]["press_articles"]["Row"]
+export type Declaration = Database["public"]["Tables"]["declarations"]["Row"]
 export type TransferType = Database["public"]["Enums"]["transfer_type"]
 
 export const TRANSFER_TYPES = ["TRANSFER", "RUMOUR", "EXTENSION"] as const

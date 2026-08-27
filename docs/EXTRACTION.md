@@ -131,7 +131,10 @@ Deux nœuds suffisent :
 
 1. **Schedule Trigger** — toutes les 30 minutes
 2. **Execute Command** —
-   `cd /home/sacha/mercato && npm run extract -- --out /var/lib/mercato/claims.jsonl`
+   `cd /home/sacha/mercato && npm run extract -- --send`
+
+   (ou `--out /var/lib/mercato/claims.jsonl` pour regarder sans écrire —
+   cf. §6)
 
 C'est tout. Commence par lancer le workflow à la main (bouton *Test workflow*)
 et regarde la sortie du nœud : si le script marche en ligne de commande, il
@@ -142,12 +145,47 @@ marche dans n8n.
 > les mêmes brèves. Le journal n'est écrit qu'en fin de passage réussi : une
 > interruption fait retenter, elle ne perd rien.
 
-## 6. Ce qui n'est pas encore branché
+## 6. Envoyer vers la base
 
-L'envoi vers Vercel. Aujourd'hui le script écrit un `.jsonl` local — c'est
-volontaire : **rien ne part vers la base avant qu'on ait un taux de rejet
-regardable**, mesuré sur de vrais articles. La table des déclarations et
-l'endpoint `/api/claims` viennent ensuite.
+**L'envoi se demande, il ne se subit pas.** Sans `--send`, rien ne part — c'est
+volontaire : rien n'atterrit en base avant qu'on ait un taux de rejet
+regardable, mesuré sur de vrais articles. Le `--out` local reste là pour
+regarder sans écrire.
+
+Deux variables suffisent, dans `~/.mercato.env` ou dans l'environnement :
+
+```bash
+export MERCATO_URL=https://mercato-two-zeta.vercel.app
+export CRON_SECRET=…            # le même jeton porteur que le cron
+
+npm run extract -- --send --limit 5
+```
+
+**Le mini PC ne détient aucune clé Supabase.** Il parle à `/api/claims`, qui
+valide, résout les clubs contre son propre référentiel, et écrit. Un jeton volé
+ici permet d'envoyer des déclarations malformées — que le schéma refuse — pas
+de toucher à la base.
+
+L'envoi précède l'écriture du journal : un lot refusé par le serveur est rejoué
+au passage suivant, pas marqué comme traité.
+
+| Réponse | Ce qu'elle veut dire |
+|---|---|
+| `{"articles":3,"declarations":4,"outOfScope":1}` | Écrit. `outOfScope` compte les déclarations justes mais sans club de L1 — jamais une erreur. |
+| **401** | `CRON_SECRET` absent ou faux **des deux côtés** : un secret absent sur Vercel ferme l'endpoint au lieu de l'ouvrir. |
+| **422** | Lot malformé. C'est une erreur du worker, pas du serveur : inutile de retenter tel quel, la réponse nomme les champs fautifs. |
+
+Rejouer le même lot ne crée rien de neuf : la clé de dédoublonnage porte
+l'article, le joueur, la route, le modèle et la version de consigne. Changer de
+modèle produit en revanche une ligne **de plus**, comparable à l'ancienne —
+c'est ce qui permettra de mesurer un changement de modèle sur du vrai corpus.
+
+## 7. Ce qui n'est pas encore branché
+
+Le **rapprochement** déclaration → piste. Les déclarations s'écrivent, mais
+`transfer_id` reste nul : rien n'apparaît encore sur les cartes du feed. C'est
+l'étape suivante, et elle mérite son propre passage — décider qu'un article
+parle de la rumeur déjà en base, ou d'une nouvelle, n'est pas un détail.
 
 ---
 

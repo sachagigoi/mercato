@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import type { BytesFetcher } from "../articles.ts";
+import { publishDeclarations, type DeclarationRow } from "../declarations.ts";
 import { createMaxifoot } from "../sources/maxifoot.ts";
 import { OLLAMA_FORMAT, STANCES } from "./claims.ts";
 import { buildUserPrompt, SYSTEM_PROMPT, type Extractor } from "./ollama.ts";
-import { rejectionRate, runSource } from "./run.ts";
+import { rejectionRate, runSource, toPublishPayload } from "./run.ts";
 
 const fixture = (name: string) =>
   new Uint8Array(readFileSync(new URL(`../sources/__fixtures__/${name}`, import.meta.url)));
@@ -213,5 +214,95 @@ describe("SYSTEM_PROMPT", () => {
     // L'absence de montant doit être présentée comme le cas normal : sans ça,
     // un décodeur contraint en fabrique un plutôt que de rendre null.
     assert.match(SYSTEM_PROMPT, /pas un échec/);
+  });
+});
+
+describe("toPublishPayload", () => {
+  /** Le passage réel des fixtures, avec une déclaration retenue sur Bouaddi. */
+  const runOnce = () =>
+    runSource(
+      createMaxifoot(fixtureFetcher()),
+      fakeExtractor((sentences) => {
+        const i = sentences.findIndex((s) => /100 M€|100 millions/.test(s));
+        return i < 0
+          ? []
+          : [{ player: "Bouaddi", fromClub: "Lille", toClub: "Manchester City", feeText: "100 M€", feeKind: "transfert", stance: "officiel", sentence: i }];
+      }),
+      { sleep: noSleep },
+    );
+
+  it("n'envoie que les articles porteurs d'une déclaration", async () => {
+    // Les autres n'enrichissent rien : les envoyer remplirait `press_articles`
+    // de brèves muettes, et fausserait le décompte des articles traités.
+    const payload = toPublishPayload(await runOnce(), {
+      source: "Maxifoot", tier: 1, model: "test", promptVersion: "1",
+    });
+
+    assert.equal(payload.articles.length, 1);
+    assert.equal(payload.articles[0].claims.length, 1);
+    assert.equal(payload.articles[0].claims[0].player, "Bouaddi");
+  });
+
+  it("envoie les libellés bruts, jamais les clés résolues", async () => {
+    // Le worker rapporte ce qu'il a lu ; c'est le serveur qui décide de quel
+    // club il s'agit. Envoyer une clé figerait le référentiel du mini PC.
+    const payload = toPublishPayload(await runOnce(), {
+      source: "Maxifoot", tier: 1, model: "test", promptVersion: "1",
+    });
+
+    const claim = payload.articles[0].claims[0];
+    assert.equal(claim.fromClub, "Lille");
+    assert.ok(!("fromClubKey" in claim), "une clé de club a fui dans l'envoi");
+    assert.equal(claim.feeEur, 100_000_000);
+    assert.match(claim.quote, /100 M€|100 millions/);
+  });
+
+  it("porte le modèle et la version de consigne au niveau du lot", async () => {
+    // Un passage tourne avec un modèle : les répéter par ligne inviterait un
+    // worker à envoyer un lot incohérent.
+    const payload = toPublishPayload(await runOnce(), {
+      source: "Maxifoot", tier: 1, model: "qwen2.5:3b", promptVersion: "4",
+    });
+
+    assert.equal(payload.model, "qwen2.5:3b");
+    assert.equal(payload.promptVersion, "4");
+  });
+});
+
+describe("worker -> endpoint", () => {
+  it("un passage réel traverse la validation du serveur sans perte", async () => {
+    // La couture la plus fragile du pipeline : deux schémas écrits séparément,
+    // reliés par du JSON qui traverse le réseau. Un champ renommé d'un côté ne
+    // casse rien à la compilation — il vide silencieusement une colonne.
+    const report = await runSource(
+      createMaxifoot(fixtureFetcher()),
+      fakeExtractor((sentences) => {
+        const i = sentences.findIndex((s) => /100 M€|100 millions/.test(s));
+        return i < 0
+          ? []
+          : [{ player: "Bouaddi", fromClub: "Lille", toClub: "Manchester City", feeText: "100 M€", feeKind: "transfert", stance: "officiel", sentence: i }];
+      }),
+      { sleep: noSleep },
+    );
+
+    const written: DeclarationRow[] = [];
+    const published = await publishDeclarations(
+      toPublishPayload(report, { source: "Maxifoot", tier: 1, model: "test", promptVersion: "1" }),
+      {
+        async upsertArticles(rows) {
+          return new Map(rows.map((r) => [r.guid, `id-${r.guid}`]));
+        },
+        async upsertDeclarations(rows) {
+          written.push(...rows);
+        },
+      },
+    );
+
+    assert.equal(published.declarations, 1);
+    assert.equal(written[0].player_name, "Bouaddi");
+    assert.equal(written[0].fee_eur, 100_000_000);
+    // Le club résolu par le serveur, à partir du seul libellé « Lille ».
+    assert.equal(written[0].from_club_key, "1082");
+    assert.match(written[0].quote, /100 M€|100 millions/);
   });
 });

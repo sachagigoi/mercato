@@ -8,6 +8,7 @@ import {
   type MediaStore,
   type TransferStore,
 } from "@/lib/ingest";
+import type { DeclarationStore } from "@/lib/declarations";
 import { normalizeName } from "@/lib/format";
 import type { MarketValueQueue, PendingValue } from "@/lib/market-value";
 import type { DailyBudget, MediaQueue, PendingMedia } from "@/lib/resolve-media";
@@ -246,6 +247,46 @@ export function createMarketValueStore(): MarketValueQueue {
         .eq("tm_player_id", tmPlayerId);
 
       if (error) throw new Error(`horodatage de la tentative : ${error.message}`);
+    },
+  };
+}
+
+/**
+ * Dépôt des déclarations de presse (§13 des specs — pipeline multi-sources).
+ *
+ * Séparé des précédents pour la même raison : `press_articles` et
+ * `declarations` ne partagent avec `transfers` ni cycle de vie ni fréquence
+ * d'écriture. Elles sont alimentées par un worker externe, pas par le cron.
+ */
+export function createDeclarationStore(): DeclarationStore {
+  const supabase = createAdminClient();
+
+  return {
+    async upsertArticles(rows) {
+      const found = new Map<string, string>();
+      if (rows.length === 0) return found;
+
+      // `select()` sur l'upsert : PostgREST rend les lignes écrites, donc leur
+      // identifiant. Sans ça il faudrait une seconde requête pour retrouver
+      // les articles qu'on vient d'insérer.
+      const { data, error } = await supabase
+        .from("press_articles")
+        .upsert([...rows], { onConflict: "guid", ignoreDuplicates: false })
+        .select("id, guid");
+
+      if (error) throw new Error(`upsert des articles : ${error.message}`);
+      for (const row of data ?? []) found.set(row.guid, row.id);
+      return found;
+    },
+
+    async upsertDeclarations(rows) {
+      if (rows.length === 0) return;
+
+      const { error } = await supabase
+        .from("declarations")
+        .upsert([...rows], { onConflict: "claim_key", ignoreDuplicates: false });
+
+      if (error) throw new Error(`upsert des déclarations : ${error.message}`);
     },
   };
 }

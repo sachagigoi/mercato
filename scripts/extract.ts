@@ -8,20 +8,29 @@
  *   node --experimental-strip-types scripts/extract.ts --dry-run
  *   node --experimental-strip-types scripts/extract.ts --dry-run --verbose
  *   node --experimental-strip-types scripts/extract.ts --limit 5 --out claims.jsonl
+ *   node --experimental-strip-types scripts/extract.ts --send
  *
  * `--verbose` montre ce que le modèle a répondu et les phrases qu'il a lues.
  * C'est le mode à utiliser dès qu'une extraction est rejetée : sans lui, on
  * sait qu'elle a échoué mais pas pourquoi.
  *
  * `--dry-run` n'écrit rien et affiche ce que le modèle a produit : c'est le
- * mode à utiliser tant qu'on mesure la précision. Rien ne part vers la base
- * avant d'avoir un taux de rejet regardable.
+ * mode à utiliser tant qu'on mesure la précision. C'est le DÉFAUT de fait :
+ * sans `--send`, aucune déclaration ne part vers la base. L'envoi se demande,
+ * il ne se subit pas — rien ne doit atterrir en base avant qu'on ait un taux
+ * de rejet regardable, mesuré sur de vrais articles.
  */
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
-import { createBytesFetcher } from "../lib/articles.ts";
-import { createOllamaExtractor } from "../lib/extract/ollama.ts";
-import { rejectionRate, runSource, type ArticleOutcome } from "../lib/extract/run.ts";
+import { createBytesFetcher, type PressSource } from "../lib/articles.ts";
+import { createOllamaExtractor, type Extractor } from "../lib/extract/ollama.ts";
+import {
+  rejectionRate,
+  runSource,
+  toPublishPayload,
+  type ArticleOutcome,
+  type RunReport,
+} from "../lib/extract/run.ts";
 import { createMaxifoot } from "../lib/sources/maxifoot.ts";
 
 const USER_AGENT =
@@ -88,8 +97,47 @@ function show(o: ArticleOutcome, verbose: boolean) {
   }
 }
 
+
+/**
+ * Envoie les déclarations retenues à `/api/claims`.
+ *
+ * Le worker n'a aucun accès à la base : il parle à un endpoint, qui valide,
+ * résout et écrit. C'est cette frontière qui rend le mini PC remplaçable — et
+ * qui fait qu'un secret volé ici ne donne pas les clés de la base.
+ */
+async function send(report: RunReport, source: PressSource, extractor: Extractor) {
+  const url = process.env.MERCATO_URL;
+  const secret = process.env.CRON_SECRET;
+  if (!url || !secret) {
+    throw new Error("MERCATO_URL et CRON_SECRET sont requis pour --send.");
+  }
+
+  const payload = toPublishPayload(report, {
+    source: source.name,
+    tier: source.tier,
+    model: extractor.model,
+    promptVersion: extractor.promptVersion,
+  });
+
+  if (payload.articles.length === 0) {
+    console.log("  → rien à envoyer");
+    return;
+  }
+
+  const res = await fetch(`${url.replace(/\/$/, "")}/api/claims`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
+    body: JSON.stringify(payload),
+  });
+
+  const body = await res.text();
+  if (!res.ok) throw new Error(`envoi : HTTP ${res.status} ${body.slice(0, 200)}`);
+  console.log(`  → envoyé : ${body}`);
+}
+
 async function main() {
   const dryRun = flag("dry-run");
+  const sending = flag("send");
   const verbose = flag("verbose");
   const limit = Number(arg("limit", "20"));
   const out = arg("out");
@@ -115,6 +163,10 @@ async function main() {
   for (const e of report.errors) console.log(`  ! ${e}`);
 
   if (dryRun) return;
+
+  // L'envoi précède l'écriture du journal : un lot refusé par le serveur doit
+  // pouvoir être rejoué au passage suivant, pas être marqué comme traité.
+  if (sending) await send(report, source, extractor);
 
   if (out) {
     for (const o of report.outcomes) {

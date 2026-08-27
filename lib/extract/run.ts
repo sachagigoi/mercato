@@ -1,4 +1,5 @@
 import type { Article, PressSource } from "../articles.ts";
+import type { PublishInput } from "../declarations.ts";
 import { acceptClaim, inScope, type AcceptedClaim, type Rejected } from "./claims.ts";
 import type { Extractor } from "./ollama.ts";
 import { prefilter } from "./prefilter.ts";
@@ -165,4 +166,49 @@ export async function runSource(
 export function rejectionRate(report: RunReport): number {
   const total = report.claims + report.rejected;
   return total === 0 ? 0 : report.rejected / total;
+}
+
+/**
+ * Le rapport d'un passage, mis en forme pour `/api/claims`.
+ *
+ * Ce que le worker envoie, ce sont ses **observations** : le nom lu, la
+ * citation copiée, le montant converti par un parseur testé. Pas ses
+ * conclusions — les clés de clubs sont délibérément absentes, le serveur les
+ * recalcule depuis son propre référentiel. Une correction de référentiel
+ * s'applique alors sans redéployer le mini PC.
+ */
+export function toPublishPayload(
+  report: RunReport,
+  meta: { source: string; tier: number; model: string; promptVersion: string },
+): PublishInput {
+  return {
+    model: meta.model,
+    promptVersion: meta.promptVersion,
+    articles: report.outcomes
+      // Un article sans déclaration retenue n'a rien à dire : l'envoyer
+      // remplirait `press_articles` de brèves qui n'enrichissent rien.
+      .filter((o) => o.claims.length > 0)
+      .map((o) => ({
+        source: meta.source,
+        tier: meta.tier,
+        guid: o.article.guid,
+        url: o.article.url,
+        title: o.article.title,
+        publishedAt: o.article.publishedAt?.toISOString() ?? null,
+        claims: o.claims.map((c) => ({
+          player: c.player,
+          fromClub: c.fromClubRaw,
+          toClub: c.toClubRaw,
+          feeEur: c.feeEur,
+          feeLabel: c.feeLabel,
+          feeKind: c.feeKind,
+          qualifier: c.qualifier,
+          bonusEur: c.bonusEur,
+          stance: c.stance,
+          quote: c.quote,
+          feeQuote: c.feeQuote,
+          playerInQuote: c.playerInQuote,
+        })),
+      })),
+  };
 }
