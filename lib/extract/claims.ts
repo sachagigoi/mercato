@@ -180,6 +180,19 @@ export function acceptClaim(raw: unknown, sentences: readonly string[]): Verdict
   const bonus = locateAmount(c.bonusText, sentences, null);
   const bonusEur = typeof bonus === "object" && bonus !== null ? bonus.eur : null;
 
+  // La nature de l'opération doit être dite par le texte.
+  //
+  // Même principe que pour le montant et les clubs, et le même déclencheur :
+  // sur une brève qui n'emploie jamais le mot, le modèle a rendu « libre »
+  // pour un joueur sous contrat. `libre` allume une pastille « Libre » sur la
+  // carte — une affirmation sur la situation contractuelle d'une personne, à
+  // ne pas tirer d'un vocabulaire fermé rempli au jugé.
+  //
+  // Un déclassement, pas un rejet : la déclaration reste juste par ailleurs,
+  // et « inconnu » est l'aveu honnête. C'est le même arbitrage que pour le
+  // qualificatif — corriger le champ plutôt que perdre le fait.
+  const feeKind = attestedKind(c.feeKind, sentences.join(" "));
+
   // Un club de L1 attribué doit être cité dans l'article.
   //
   // Le pendant du contrôle sur le joueur et sur le montant, et il devient
@@ -206,7 +219,7 @@ export function acceptClaim(raw: unknown, sentences: readonly string[]): Verdict
       toClub,
       feeEur: located ? located.eur : null,
       feeLabel: located ? formatFee(located.eur) : null,
-      feeKind: c.feeKind,
+      feeKind,
       // La nuance lue dans le texte l'emporte sur celle du modèle, qui rend
       // « exact » quoi qu'il arrive. Sa valeur reste le repli quand le
       // vocabulaire du journaliste sort de ce que le code sait lire.
@@ -338,4 +351,34 @@ function richer(candidate: AcceptedClaim, held: AcceptedClaim): boolean {
   if ((candidate.feeEur !== null) !== (held.feeEur !== null)) return candidate.feeEur !== null;
   if (candidate.playerInQuote !== held.playerInQuote) return candidate.playerInQuote;
   return false;
+}
+
+/**
+ * Indices textuels des natures d'opération qui affirment quelque chose.
+ *
+ * `transfert` et `inconnu` n'y figurent pas : le premier est le cas par
+ * défaut d'un mercato, le second ne prétend rien. Les quatre autres disent au
+ * lecteur quelque chose de vérifiable, et doivent donc être vérifiables.
+ */
+const KIND_CUES = {
+  libre: /\blibre\b|fin de contrat|gratuit|sans indemnite|agent libre|bosman/,
+  pret: /\bprets?\b|en pret/,
+  pret_avec_option: /option d'achat|obligation d'achat|option obligatoire/,
+  clause: /clause liberatoire|clause de depart|clause de sortie/,
+} as const;
+
+function attestedKind(
+  kind: (typeof FEE_KINDS)[number],
+  article: string,
+): (typeof FEE_KINDS)[number] {
+  const cue = KIND_CUES[kind as keyof typeof KIND_CUES];
+  if (!cue) return kind;
+
+  const text = normalized(article);
+  if (cue.test(text)) return kind;
+
+  // Un prêt avec option dont l'article ne mentionne que le prêt reste un prêt :
+  // déclasser jusqu'à « inconnu » perdrait ce que le texte dit vraiment.
+  if (kind === "pret_avec_option" && KIND_CUES.pret.test(text)) return "pret";
+  return "inconnu";
 }

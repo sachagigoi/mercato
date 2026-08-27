@@ -304,3 +304,46 @@ describe("messages de rejet", () => {
     assert.ok(!v.ok && v.rejected.reason.includes("player"), v.ok ? "" : v.rejected.reason);
   });
 });
+
+describe("nature de l'opération", () => {
+  it("déclasse un « libre » que l'article n'affirme nulle part", () => {
+    // Le cas réel : sur la brève Jonathan David, le modèle a rendu `libre`
+    // pour un joueur sous contrat, dans un texte qui n'emploie jamais le mot.
+    // `libre` allume une pastille sur la carte — une affirmation sur la
+    // situation contractuelle d'une personne.
+    const v = acceptClaim(claim({ feeText: null, feeKind: "libre" }), ARTICLE);
+    assert.ok(v.ok, "la déclaration ne doit pas être perdue pour un champ");
+    assert.equal(v.claim.feeKind, "inconnu");
+  });
+
+  it("garde la nature que le texte atteste", () => {
+    const libre = splitSentences(
+      "PSG : Barcola libre en juin. Bradley Barcola sera libre de tout contrat cet été.",
+    );
+    const v = acceptClaim(claim({ feeText: null, feeKind: "libre", sentence: 1 }), libre);
+    assert.ok(v.ok);
+    assert.equal(v.claim.feeKind, "libre");
+  });
+
+  it("retombe sur le prêt quand l'option n'est pas dite", () => {
+    // Déclasser jusqu'à « inconnu » perdrait ce que le texte dit vraiment.
+    const prete = splitSentences(
+      "PSG : Barcola en prêt. Bradley Barcola part en prêt du Paris Saint-Germain à Liverpool.",
+    );
+    const v = acceptClaim(
+      claim({ feeText: null, feeKind: "pret_avec_option", sentence: 1 }),
+      prete,
+    );
+    assert.ok(v.ok);
+    assert.equal(v.claim.feeKind, "pret");
+  });
+
+  it("n'exige rien de « transfert » ni d'« inconnu »", () => {
+    // Le premier est le cas par défaut d'un mercato, le second ne prétend rien.
+    for (const feeKind of ["transfert", "inconnu"] as const) {
+      const v = acceptClaim(claim({ feeKind }), ARTICLE);
+      assert.ok(v.ok);
+      assert.equal(v.claim.feeKind, feeKind);
+    }
+  });
+});

@@ -95,7 +95,7 @@ qui doit inquiéter, c'est un taux **durablement** au-dessus de 30 %.
 > réel a manqué une signature libre à Brest sans qu'aucun chiffre ne bouge :
 > ni déclaration, ni rejet, donc rien à voir. D'où la colonne des silences.
 
-> **Sept passages réels ont fait évoluer l'extraction**, chacun sur un défaut
+> **Huit passages réels ont fait évoluer l'extraction**, chacun sur un défaut
 > que le papier n'aurait pas montré.
 >
 > **Le premier a rejeté 100 %.** Deux causes, toutes deux de
@@ -159,6 +159,15 @@ qui doit inquiéter, c'est un taux **durablement** au-dessus de 30 %.
 > chiffrée. Et « Too small: expected string to have >=2 characters », rendu
 > quatre fois, ne disait pas s'il s'agissait du joueur ou d'un club : le rejet
 > nomme maintenant le champ.
+>
+> **Le huitième est le premier propre** : cinq brèves, cinq déclarations, aucun
+> rejet, aucun silence, aucun doublon. `fromClub` se remplit enfin sur les
+> départs vers l'étranger, et les nuances apparaissent (« environ 35 M€ »,
+> « minimum 25 M€ »). Le seul défaut restant tenait à un mot : `feeKind: libre`
+> sur un joueur sous contrat, dans un texte qui n'emploie jamais le mot. Cette
+> nature-là allume une pastille « Libre » sur la carte — une affirmation sur la
+> situation contractuelle de quelqu'un. Elle doit désormais être attestée par
+> le texte, faute de quoi elle est déclassée en « inconnu ».
 
 ## 4. Comparer deux modèles
 

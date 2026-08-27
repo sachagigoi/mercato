@@ -1225,6 +1225,12 @@ Trois contrôles, et un seul est verrouillé au niveau de la phrase :
   `player_in_quote` de confiance, pas une condition.
 - **Le périmètre est vérifié deux fois**, côté worker et côté serveur. Le
   serveur ne peut pas présumer de qui lui écrit.
+- **Tout ce que le modèle affirme doit se retrouver dans le texte.** La règle
+  s'est étendue champ par champ, chaque fois sur un cas réel : le club de L1
+  attribué doit être cité, la nature de l'opération (`libre`, `pret`, `clause`)
+  doit être dite. Un champ non attesté est déclassé plutôt que rejeté quand le
+  reste de la déclaration tient — corriger le champ vaut mieux que perdre le
+  fait.
 
 Un rejet n'est pas un incident : c'est **la mesure**. Le taux de rejet se lit
 sans étiqueter quoi que ce soit et sert de cadran de précision — il monte le
@@ -1237,7 +1243,7 @@ d'articles dont le modèle ne tire *ni déclaration ni rejet* : un article de L1
 peut légitimement ne parler d'aucun mouvement, mais une part qui monte est un
 oubli qui s'installe.
 
-### 13.5 Ce que sept passages réels ont corrigé
+### 13.5 Ce que huit passages réels ont corrigé
 
 Aucun de ces défauts n'était visible sur le papier.
 
@@ -1252,6 +1258,7 @@ Aucun de ces défauts n'était visible sur le papier.
 
 | 6 | **Le rappel remonte, `fromClub` résiste** | Sur les mêmes cinq brèves : trois déclarations au lieu de deux, plus aucun silence. Mais `fromClub` reste à null dans les trois cas où le club d'origine est étranger. « Le club qu'il quitte » demande de trancher un sens ; la consigne demande désormais « le club où il joue aujourd'hui ». Le champ `qualifier`, lui, sortait toujours à `exact` — la nuance (« environ », « au moins ») se lit maintenant dans le texte juste avant le chiffre, ce que le code fait mieux et gratuitement. |
 | 7 | **Le 3B mesuré : plus rapide, et inutilisable ici** | 31 s contre 42 s par article, mais aucun des deux montants que le 7B trouvait, cinq entrées pour un seul transfert, et quatre sorties hors schéma sur un même article. Le montant est le produit. Le passage a surtout révélé deux défauts du tableau de bord : les doublons comptaient comme des déclarations (repliés avant comptage désormais, en gardant la chiffrée), et un rejet de schéma ne nommait pas le champ fautif. |
+| 8 | **Le premier passage propre**, et un mot de trop | Cinq brèves, cinq déclarations, aucun rejet, aucun silence, aucun doublon. `fromClub` se remplit sur les départs vers l'étranger, les nuances apparaissent. Reste `feeKind: libre` sur un joueur sous contrat, dans un texte qui n'emploie jamais le mot : cette nature allume une pastille « Libre » sur la carte, donc elle doit être attestée par le texte, sinon elle est déclassée en « inconnu ». |
 
 **Ce que la série enseigne** : les trois premiers défauts venaient du schéma,
 les deux suivants de ce que la consigne *ne dit pas*. Un décodeur contraint ne
