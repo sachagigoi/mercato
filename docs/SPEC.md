@@ -1150,6 +1150,13 @@ relit, se révise en revue, et survit à une recréation du projet. Le plan Hobb
 autorise une région, et le gain porte directement sur le TTFB, donc sur le
 critère Lighthouse du §9.
 
+Vérifié sur le déploiement de prévisualisation, en comparant l'en-tête
+`x-vercel-id` de la preview et de la production sur la même requête :
+`iad1::cdg1::…` contre `iad1::iad1::…`. Le premier segment est le PoP
+d'entrée, le second la région d'exécution — c'est celui-là qui a bougé. **La
+production restera en `iad1` jusqu'à la fusion** : c'est la branche de
+production qui porte le réglage.
+
 ### Pièges d'environnement rencontrés
 
 - **`NODE_USE_ENV_PROXY=1`** est nécessaire en session Claude Code web : le
