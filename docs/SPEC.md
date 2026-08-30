@@ -1061,7 +1061,7 @@ proprement quand `API_FOOTBALL_KEY` est absente — ne pas la remettre.
 | Production | <https://mercato-two-zeta.vercel.app> |
 | Variables | Les quatre posées, sur les trois environnements |
 | Protection | Vercel Authentication désactivée — la route cron doit rester joignable depuis GitHub Actions |
-| Région des fonctions | `iad1` (Washington), à rapprocher de la base — voir plus bas |
+| Région des fonctions | `cdg1` (Paris), fixée dans `vercel.json` — la base est en `eu-west-3` |
 
 Tout `push` sur la branche de production redéploie en production ; un `push` sur
 une autre branche produit un déploiement de prévisualisation. Les outils MCP
@@ -1111,21 +1111,44 @@ faudrait retrouver chaque ancienne rumeur dans une page qui ne les liste plus.
 Les lignes moissonnées avant cette version resteront donc hors des puces de
 pays jusqu'à leur sortie du feed.
 
-**3. Vérifier le Realtime.** C'est le seul morceau du MVP **jamais validé en
-conditions réelles** : la WebSocket ne s'établit pas depuis une session Claude
-Code web, et le repli polling 60 s prend le relais en masquant le problème. Le
-HTML servi ne tranche pas davantage — l'indicateur part de « Connexion » et ne
-bascule qu'une fois le canal souscrit, donc dans un vrai navigateur.
-Ouvrir le feed, confirmer que l'indicateur de la barre de filtres affiche
-**« En direct »** et non « Différé 60 s », puis faire un `update` de
-`probability_score` en SQL et vérifier que la jauge bouge sans rechargement.
+**3. Vérifier le Realtime — moitié faite.** Le point restait entier faute de
+navigateur. Il se coupe en deux, et **la moitié serveur est désormais vérifiée
+en base** :
 
-**4. Rapprocher les fonctions de la base.** Le projet a été créé en `iad1`
-(Washington) alors que la base est en `eu-west-3` (Paris) : chaque rendu
-serveur du feed traverse l'Atlantique deux fois. *Settings > Functions >
-Function Region* → `cdg1`. Le plan Hobby autorise une région, changeable
-gratuitement, et le gain porte directement sur le TTFB, donc sur le critère
-Lighthouse du §9.
+| Fait | Constat |
+|---|---|
+| `public.transfers` dans la publication `supabase_realtime` | oui — `insert`, `update` et `delete` |
+| `replica identity` de `transfers` | `full` : l'ancien enregistrement voyage avec le nouveau |
+| Contrôle d'accès du canal | `transfers_public_read` accordée à `anon` — Realtime applique la RLS du rôle qui s'abonne, l'abonné anonyme passe |
+| `declarations`, `press_articles`, `media_cache` | RLS active, **aucune policy**, et **hors publication** : pas de fuite par le canal non plus |
+
+Ce dernier point vaut d'être noté : rendre une table invisible côté client ne
+dit rien de sa diffusion en temps réel. Les deux portes sont fermées, mais ce
+sont bien **deux** portes.
+
+Reste la jambe cliente, et elle seule : **la WebSocket depuis un vrai
+navigateur.** Elle ne s'établit pas depuis une session Claude Code web — non
+que l'hôte soit injoignable, comme on l'a d'abord cru : une requête HTTP
+atteint bien `…supabase.co/realtime/v1/websocket`, qui répond
+`401 MISSING_API_KEY`. C'est le relais TLS de l'environnement qui coupe la
+poignée de main de Chromium, connexion réinitialisée après 39 octets. Le repli
+polling 60 s masque alors le problème, et le HTML servi ne tranche pas
+davantage — l'indicateur part de « Connexion » et ne bascule qu'une fois le
+canal souscrit.
+
+Ouvrir le feed dans un navigateur ordinaire, confirmer que l'indicateur de la
+barre de filtres affiche **« En direct »** et non « Différé 60 s », puis faire
+un `update` de `probability_score` en SQL et vérifier que la jauge bouge sans
+rechargement.
+
+**4. Rapprocher les fonctions de la base — fait.** Le projet avait été créé en
+`iad1` (Washington) alors que la base est en `eu-west-3` (Paris) : chaque rendu
+serveur du feed traversait l'Atlantique deux fois. La région est désormais
+`cdg1`, **posée dans `vercel.json`** plutôt que dans le dashboard — la
+configuration prime sur le réglage de projet, et vit dans le dépôt : elle se
+relit, se révise en revue, et survit à une recréation du projet. Le plan Hobby
+autorise une région, et le gain porte directement sur le TTFB, donc sur le
+critère Lighthouse du §9.
 
 ### Pièges d'environnement rencontrés
 
