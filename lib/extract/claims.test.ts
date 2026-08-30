@@ -347,3 +347,131 @@ describe("nature de l'opération", () => {
     }
   });
 });
+
+describe("le rôle d'un club, pas seulement sa présence", () => {
+  // Les cinq brèves du passage du 30 août, et ce que qwen2.5:7b en a rendu.
+  // Le tableau de bord affichait « 0 rejeté, taux de rejet 0 % » sur un lot qui
+  // contenait une carte fausse : il mesurait ce que le garde-fou attrapait, pas
+  // ce qui était vrai.
+
+  it("rejette un club prétendant donné pour l'origine", () => {
+    // Monaco et la Juventus sont deux PRÉTENDANTS au même joueur. Le modèle en
+    // a fait « Monaco -> Juventus » : une carte disant que Sarr quitte un club
+    // où il n'a jamais joué. Tous les contrôles d'alors passaient — les deux
+    // clubs cités, le joueur cité, « prêt avec option d'achat » littéralement
+    // dans le texte.
+    const breve = splitSentences(
+      "En vue d'un potentiel départ de Lamine Camara, l'AS Monaco pense à recruter " +
+        "Pape Matar Sarr (23 ans). Mais le club de la Principauté devra se montrer plus " +
+        "convaincant que la Juventus, qui a fait son apparition sur le dossier. La Vieille " +
+        "Dame étudie notamment la possibilité de solliciter un prêt avec option d'achat.",
+    );
+    const v = acceptClaim(
+      claim({
+        player: "Pape Matar Sarr",
+        fromClub: "AS Monaco",
+        toClub: "Juventus",
+        feeText: null,
+        feeKind: "pret_avec_option",
+        stance: "rumeur",
+        sentence: 0,
+      }),
+      breve,
+    );
+    assert.ok(!v.ok);
+    assert.match(v.rejected.reason, /rôle contredit/);
+  });
+
+  it("laisse passer le silence, qui est le cas courant", () => {
+    // Le club est nommé, mais rien entre lui et le joueur ne dit le sens.
+    // Exiger que le texte CONFIRME le rôle rejetterait l'essentiel des
+    // extractions justes — la presse désigne un club par une périphrase une
+    // phrase sur deux (« le club artésien », « la Vieille Dame »). Le contrôle
+    // ne rejette que la contradiction.
+    const breve = splitSentences(
+      "Le RC Lens et West Ham ont trouvé un accord pour Jean-Clair Todibo.",
+    );
+    const v = acceptClaim(
+      claim({
+        player: "Jean-Clair Todibo",
+        fromClub: "West Ham",
+        toClub: "RC Lens",
+        feeText: null,
+        feeKind: "pret",
+        stance: "accord",
+        sentence: 0,
+      }),
+      breve,
+    );
+    assert.ok(v.ok);
+  });
+
+  it("accepte le club qui accueille, dit comme tel", () => {
+    const breve = splitSentences(
+      "Le RC Strasbourg a trouvé un accord avec le RB Leipzig pour l'arrivée de " +
+        "Conrad Harder (21 ans).",
+    );
+    const v = acceptClaim(
+      claim({
+        player: "Conrad Harder",
+        fromClub: "RB Leipzig",
+        toClub: "RC Strasbourg",
+        feeText: null,
+        feeKind: "pret",
+        stance: "accord",
+        sentence: 0,
+      }),
+      breve,
+    );
+    assert.ok(v.ok);
+    assert.equal(v.claim.toClub?.name, "RC Strasbourg");
+  });
+
+  it("accepte le club qu'on quitte, dit comme tel", () => {
+    const breve = splitSentences(
+      "Ange Lago (21 ans) va quitter l'Olympique de Marseille cet été. Le joueur " +
+        "sera libéré de son contrat.",
+    );
+    const v = acceptClaim(
+      claim({
+        player: "Ange Lago",
+        fromClub: "Olympique de Marseille",
+        toClub: "Dijon",
+        feeText: null,
+        feeKind: "libre",
+        stance: "officiel",
+        sentence: 0,
+      }),
+      breve,
+    );
+    assert.ok(v.ok);
+    assert.equal(v.claim.fromClub?.name, "Olympique de Marseille");
+    // « libéré de son contrat » est la formulation la plus courante de la presse
+    // française après « libre », et le texte est désaccentué avant le test :
+    // `\blibre\b` ne matche pas « libere ». Deux départs libres réels sont
+    // sortis en « inconnu » à cause de ce seul trou.
+    assert.equal(v.claim.feeKind, "libre");
+  });
+
+  it("ne tranche pas quand les deux sens cohabitent", () => {
+    // « départ » est dans la phrase, mais accolé à un AUTRE joueur. On ne lit
+    // qu'entre la mention du club et celle du joueur déclaré.
+    const breve = splitSentences(
+      "En vue d'un potentiel départ de Lamine Camara, l'AS Monaco veut recruter " +
+        "Pape Matar Sarr.",
+    );
+    const v = acceptClaim(
+      claim({
+        player: "Pape Matar Sarr",
+        fromClub: null,
+        toClub: "AS Monaco",
+        feeText: null,
+        feeKind: "transfert",
+        stance: "rumeur",
+        sentence: 0,
+      }),
+      breve,
+    );
+    assert.ok(v.ok, "le sens juste ne doit pas être rejeté par le voisinage");
+  });
+});

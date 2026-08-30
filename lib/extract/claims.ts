@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { formatFee, normalizeName } from "../format.ts";
-import { mentionedLigue1Clubs, resolveLigue1Club, type Club } from "../referential.ts";
+import { locateClub, mentionedLigue1Clubs, normalizeClub, resolveLigue1Club, type Club } from "../referential.ts";
 import { findAmounts, qualifierNear } from "./prefilter.ts";
 
 /**
@@ -209,6 +209,17 @@ export function acceptClaim(raw: unknown, sentences: readonly string[]): Verdict
       return reject(`club absent de l'article : ${club.name}`, raw);
   }
 
+  // Cité ne veut pas dire partie au transfert, et surtout pas dans ce sens-là.
+  for (const [role, club] of [["fromClub", fromClub], ["toClub", toClub]] as const) {
+    if (!club) continue;
+    const against = contradictsRole(sentences, club, role, c.player);
+    if (against)
+      return reject(
+        `rôle contredit par le texte : ${club.name} donné en ${role === "fromClub" ? "origine" : "destination"}, mais « ${against} »`,
+        raw,
+      );
+  }
+
   return {
     ok: true,
     claim: {
@@ -361,11 +372,68 @@ function richer(candidate: AcceptedClaim, held: AcceptedClaim): boolean {
  * lecteur quelque chose de vérifiable, et doivent donc être vérifiables.
  */
 const KIND_CUES = {
-  libre: /\blibre\b|fin de contrat|gratuit|sans indemnite|agent libre|bosman/,
+  libre: /\blibre\b|\blibere\b|fin de contrat|gratuit|sans indemnite|agent libre|bosman/,
   pret: /\bprets?\b|en pret/,
   pret_avec_option: /option d'achat|obligation d'achat|option obligatoire/,
   clause: /clause liberatoire|clause de depart|clause de sortie/,
 } as const;
+
+/**
+ * Indices de sens : ce club ACQUIERT, ou ce club LAISSE PARTIR.
+ *
+ * Écrits dans l'espace de `normalizeClub`, qui désaccentue et retire les
+ * articles : « l'arrivée de » y devient « arrivee », « se sépare de » devient
+ * « se separe ».
+ */
+const ROLE_CUES = {
+  toClub: /recrut|arrivee|s attacher services|veut s offrir|convoite|courtise|faire venir|attirer|accueillir|rejoindre|rejoint/,
+  fromClub: /quitt|depart|laisse partir|se separe|cede par|vendu|en provenance/,
+} as const;
+
+/**
+ * Le texte dit-il le CONTRAIRE du rôle attribué à ce club ?
+ *
+ * Le garde-fou vérifiait la PRÉSENCE d'un club, jamais son RÔLE. Un passage
+ * réel a rendu « Sarr · Monaco -> Juventus » sur une brève où Monaco et la Juve
+ * sont deux PRÉTENDANTS au même joueur : les deux clubs cités, le joueur cité,
+ * la nature (« prêt avec option d'achat ») littéralement dans le texte. Chaque
+ * contrôle passait, et la relation était inventée — la pire erreur possible
+ * ici, un fait faux qui se lit comme un fait.
+ *
+ * Le contrôle est **volontairement étroit**, et c'est tout le dessin : il ne
+ * demande PAS au texte de confirmer le rôle. Le silence passe. Exiger une
+ * confirmation rejetterait toutes les brèves qui désignent le club par une
+ * périphrase — « le club artésien », « le Racing », « la Vieille Dame » — et
+ * l'histoire de ce garde-fou est faite de sur-rejets.
+ *
+ * On ne lit qu'entre la mention du club et celle du joueur. C'est ce qui
+ * distingue « l'AS Monaco pense à recruter Sarr » d'un « départ de Lamine
+ * Camara » situé dans la même phrase mais accolé à un autre nom.
+ */
+function contradictsRole(
+  sentences: readonly string[],
+  club: Club,
+  role: "fromClub" | "toClub",
+  player: string,
+): string | null {
+  const opposite = role === "fromClub" ? "toClub" : "fromClub";
+  const lastName = normalizeClub(player.split(/\s+/).at(-1) ?? player);
+  if (!lastName) return null;
+
+  for (const sentence of sentences) {
+    const text = normalizeClub(sentence);
+    const clubAt = locateClub(text, club);
+    const playerAt = text.indexOf(lastName);
+    if (clubAt === null || playerAt < 0) continue;
+
+    const span = text.slice(Math.min(clubAt, playerAt), Math.max(clubAt, playerAt));
+    // Les deux sens dans le même intervalle ne tranchent rien : on passe.
+    if (ROLE_CUES[role].test(span)) continue;
+    const against = span.match(ROLE_CUES[opposite]);
+    if (against) return against[0];
+  }
+  return null;
+}
 
 function attestedKind(
   kind: (typeof FEE_KINDS)[number],

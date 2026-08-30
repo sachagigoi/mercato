@@ -721,6 +721,12 @@ optimisé**. Le taux de rejet ignorait les oublis, jusqu'à ce qu'un passage en
 laisse filer un. Le compte de déclarations récompensait le bavardage, jusqu'à
 ce qu'un modèle rende cinq fois le même transfert. Un tableau de bord se
 corrige aussi souvent que le code qu'il mesure.
+
+Le neuvième passage a fixé la limite de fond de ce cadran : **un taux de rejet
+compte ce que le garde-fou attrape, pas ce qui est vrai.** Un lot à 0 % de
+rejet peut contenir une carte fausse, et en contenait une. Aucun resserrage du
+garde-fou ne changera ça — c'est la raison d'être du banc d'essai sur articles
+étiquetés, seul instrument qui mesure la justesse plutôt que la conformité.
 - **GitHub Actions** *(retenu)* : gratuit, timeout de 6 h, runner à 16 Go, secrets intégrés, et on y
   installe ce qu'on veut. Le job n'est pas critique en latence — la carte s'affiche déjà avec le
   masque circulaire en attendant. Limites connues et acceptées : les crons GitHub sont *best effort*
@@ -1244,7 +1250,7 @@ construction — aucune vérification de sous-chaîne ne peut échouer sur une
 apostrophe — et ça coûte deux tokens au lieu de quarante, sur un CPU à
 3 tokens/s.
 
-Trois contrôles, et un seul est verrouillé au niveau de la phrase :
+Quatre contrôles, et un seul est verrouillé au niveau de la phrase :
 
 - **Le montant est cherché dans l'article, et comparé en valeur** — pas en
   caractères, et pas à l'endroit que le modèle désigne. C'est le contrôle qui
@@ -1263,6 +1269,22 @@ Trois contrôles, et un seul est verrouillé au niveau de la phrase :
   doit être dite. Un champ non attesté est déclassé plutôt que rejeté quand le
   reste de la déclaration tient — corriger le champ vaut mieux que perdre le
   fait.
+- **Cité ne veut pas dire partie au transfert, et surtout pas dans ce sens-là.**
+  Les contrôles ci-dessus vérifiaient la *présence* d'un club, jamais son
+  *rôle* — un club peut être cité comme concurrent, comme ancien club ou comme
+  courtisan. Un neuvième passage l'a payé : deux prétendants au même joueur
+  rendus en « origine → destination » (§13.5). Le texte doit donc pouvoir
+  **contredire** le rôle attribué.
+
+  Ce dernier contrôle est **volontairement étroit**, et c'est tout son dessin :
+  il ne demande pas au texte de *confirmer* le rôle. **Le silence passe.** Exiger
+  une confirmation rejetterait toutes les brèves qui nomment le club par une
+  périphrase — « le club artésien », « la Vieille Dame » —, et l'histoire de ce
+  garde-fou est faite de sur-rejets (§13.5, passages 1 à 4). Il ne lit qu'entre
+  la mention du club et celle du joueur : c'est ce qui distingue « l'AS Monaco
+  pense à **recruter** Sarr » d'un « **départ** de Lamine Camara » situé dans la
+  même phrase, mais accolé à un autre nom. Les deux sens dans le même intervalle
+  ne tranchent rien, et passent.
 
 Un rejet n'est pas un incident : c'est **la mesure**. Le taux de rejet se lit
 sans étiqueter quoi que ce soit et sert de cadran de précision — il monte le
@@ -1275,7 +1297,7 @@ d'articles dont le modèle ne tire *ni déclaration ni rejet* : un article de L1
 peut légitimement ne parler d'aucun mouvement, mais une part qui monte est un
 oubli qui s'installe.
 
-### 13.5 Ce que huit passages réels ont corrigé
+### 13.5 Ce que neuf passages réels ont corrigé
 
 Aucun de ces défauts n'était visible sur le papier.
 
@@ -1291,6 +1313,7 @@ Aucun de ces défauts n'était visible sur le papier.
 | 6 | **Le rappel remonte, `fromClub` résiste** | Sur les mêmes cinq brèves : trois déclarations au lieu de deux, plus aucun silence. Mais `fromClub` reste à null dans les trois cas où le club d'origine est étranger. « Le club qu'il quitte » demande de trancher un sens ; la consigne demande désormais « le club où il joue aujourd'hui ». Le champ `qualifier`, lui, sortait toujours à `exact` — la nuance (« environ », « au moins ») se lit maintenant dans le texte juste avant le chiffre, ce que le code fait mieux et gratuitement. |
 | 7 | **Le 3B mesuré : plus rapide, et inutilisable ici** | 31 s contre 42 s par article, mais aucun des deux montants que le 7B trouvait, cinq entrées pour un seul transfert, et quatre sorties hors schéma sur un même article. Le montant est le produit. Le passage a surtout révélé deux défauts du tableau de bord : les doublons comptaient comme des déclarations (repliés avant comptage désormais, en gardant la chiffrée), et un rejet de schéma ne nommait pas le champ fautif. |
 | 8 | **Le premier passage propre**, et un mot de trop | Cinq brèves, cinq déclarations, aucun rejet, aucun silence, aucun doublon. `fromClub` se remplit sur les départs vers l'étranger, les nuances apparaissent. Reste `feeKind: libre` sur un joueur sous contrat, dans un texte qui n'emploie jamais le mot : cette nature allume une pastille « Libre » sur la carte, donc elle doit être attestée par le texte, sinon elle est déclassée en « inconnu ». |
+| 9 | **Le tableau de bord flatte encore, pour une raison neuve** | Cinq brèves, cinq déclarations, « 0 rejeté, taux de rejet 0 % » — et une carte fausse dans le lot. Sur une brève où l'AS Monaco et la Juventus sont deux **prétendants** au même joueur, le modèle a rendu « Sarr · Monaco → Juventus » : un joueur qui quitte un club où il n'a jamais joué. Chaque contrôle passait — les deux clubs cités, le joueur cité, « prêt avec option d'achat » littéralement dans le texte. **Le garde-fou vérifiait la présence d'un club, jamais son rôle.** Le passage a aussi montré un trou dans les cues de `libre` : « libéré de son contrat » — la formulation la plus courante après « libre » — ne matchait pas le texte désaccentué, et deux départs libres réels sont sortis en « inconnu ». |
 
 **Ce que la série enseigne** : les trois premiers défauts venaient du schéma,
 les deux suivants de ce que la consigne *ne dit pas*. Un décodeur contraint ne

@@ -105,3 +105,24 @@ export function mentionedLigue1Clubs(text: string): Club[] {
   }
   return [...found.values()];
 }
+
+/**
+ * Position d'un club dans un texte **déjà passé par `normalizeClub`**, ou null.
+ *
+ * `mentionedLigue1Clubs` répond « qui est cité » ; celle-ci répond « où ». Tout
+ * contrôle qui lit les mots AUTOUR d'une mention en a besoin, et la
+ * connaissance des formes d'un club doit rester ici, avec le référentiel.
+ *
+ * La forme la plus à gauche gagne : un article nomme généralement le club en
+ * toutes lettres la première fois, puis par un raccourci.
+ */
+export function locateClub(normalizedText: string, club: Club): number | null {
+  const haystack = ` ${normalizedText} `;
+  let best: number | null = null;
+  for (const form of CLUB_FORMS) {
+    if (INDEX.get(form)?.tmId !== club.tmId) continue;
+    const at = haystack.indexOf(` ${form} `);
+    if (at >= 0 && (best === null || at < best)) best = at;
+  }
+  return best;
+}
