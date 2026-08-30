@@ -1297,6 +1297,23 @@ d'articles dont le modèle ne tire *ni déclaration ni rejet* : un article de L1
 peut légitimement ne parler d'aucun mouvement, mais une part qui monte est un
 oubli qui s'installe.
 
+Le silence ne couvre pourtant qu'une moitié du rappel — celle des articles
+muets. Le premier envoi réel a montré l'autre : **une déclaration juste mais
+amputée de son montant**, sur une brève qui chiffrait pourtant le transfert. Le
+taux de rejet ne bougeait pas, le silence non plus, et `enriched` restait à
+zéro sans dire pourquoi. D'où le quatrième cadran, et il est **gratuit** : le
+préfiltre sait déjà lire les montants de l'article, il suffit de comparer ce
+qu'il trouve à ce que le modèle rapporte. Aucun étiquetage manuel.
+
+**Ce cadran pointe, il ne juge pas**, et c'est délibéré : tout chiffre d'un
+article n'est pas une indemnité de transfert. Mesuré sur le passage qui l'a
+motivé, il signale quatre montants — un oubli véritable (les 20 M€ en
+négociation sur Timber) et trois omissions *correctes* : le prix du transfert
+précédent d'un joueur (« recruté pour 24 M€ l'été dernier ») et, deux fois, une
+clause de rachat sur un départ libre. En faire un compteur de fautes afficherait
+« 3 fautes » là où le modèle a bien travaillé — soit exactement le travers des
+trois cadrans précédents, à l'envers.
+
 ### 13.5 Ce que neuf passages réels ont corrigé
 
 Aucun de ces défauts n'était visible sur le papier.
@@ -1314,6 +1331,7 @@ Aucun de ces défauts n'était visible sur le papier.
 | 7 | **Le 3B mesuré : plus rapide, et inutilisable ici** | 31 s contre 42 s par article, mais aucun des deux montants que le 7B trouvait, cinq entrées pour un seul transfert, et quatre sorties hors schéma sur un même article. Le montant est le produit. Le passage a surtout révélé deux défauts du tableau de bord : les doublons comptaient comme des déclarations (repliés avant comptage désormais, en gardant la chiffrée), et un rejet de schéma ne nommait pas le champ fautif. |
 | 8 | **Le premier passage propre**, et un mot de trop | Cinq brèves, cinq déclarations, aucun rejet, aucun silence, aucun doublon. `fromClub` se remplit sur les départs vers l'étranger, les nuances apparaissent. Reste `feeKind: libre` sur un joueur sous contrat, dans un texte qui n'emploie jamais le mot : cette nature allume une pastille « Libre » sur la carte, donc elle doit être attestée par le texte, sinon elle est déclassée en « inconnu ». |
 | 9 | **Le tableau de bord flatte encore, pour une raison neuve** | Cinq brèves, cinq déclarations, « 0 rejeté, taux de rejet 0 % » — et une carte fausse dans le lot. Sur une brève où l'AS Monaco et la Juventus sont deux **prétendants** au même joueur, le modèle a rendu « Sarr · Monaco → Juventus » : un joueur qui quitte un club où il n'a jamais joué. Chaque contrôle passait — les deux clubs cités, le joueur cité, « prêt avec option d'achat » littéralement dans le texte. **Le garde-fou vérifiait la présence d'un club, jamais son rôle.** Le passage a aussi montré un trou dans les cues de `libre` : « libéré de son contrat » — la formulation la plus courante après « libre » — ne matchait pas le texte désaccentué, et deux départs libres réels sont sortis en « inconnu ». |
+| 10 | **Le premier envoi réel, et le quatrième angle mort** | Quatre déclarations retenues, une rejetée (Sarr, par le contrôle de rôle), quatre pistes créées en base — toutes justes. Mais sur « OM : Timber veut signer à Crystal Palace », la déclaration est juste et **amputée** : l'article dit « un tarif d'environ 20 millions d'euros », le modèle rend `—`. Le préfiltre, lui, lit ce montant sans peine. Aucun cadran ne bronchait : le taux de rejet est muet, le compteur de silence aussi (l'article a produit quelque chose), et `enriched` restait à zéro sans dire pourquoi. **Sur un produit dont le montant EST le produit, une déclaration amputée passait pour un succès.** |
 
 **Ce que la série enseigne** : les trois premiers défauts venaient du schéma,
 les deux suivants de ce que la consigne *ne dit pas*. Un décodeur contraint ne

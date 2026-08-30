@@ -431,3 +431,74 @@ describe("silence contre hors périmètre", () => {
     assert.equal(report.silent, report.extracted - pointed.length);
   });
 });
+
+describe("le montant que la déclaration laisse au texte", () => {
+  // Le quatrième cadran, et l'angle mort que le premier envoi réel a exposé :
+  // sur « OM : Timber veut signer à Crystal Palace », le modèle a rendu une
+  // déclaration JUSTE, sans les « environ 20 millions d'euros » de la dernière
+  // phrase. Taux de rejet inchangé, silence à zéro — l'article avait bien
+  // produit quelque chose —, et `enriched` à zéro sans dire pourquoi.
+
+  /** Le modèle voit le transfert Bouaddi -> City, et tait les 100 M€. */
+  const ampute = () =>
+    fakeExtractor((sentences) =>
+      sentences.some((phrase) => /Bouaddi/.test(phrase))
+        ? [{
+            player: "Bouaddi", fromClub: "Lille", toClub: "Manchester City",
+            feeText: null, feeKind: "transfert", stance: "officiel", sentence: 0,
+          }]
+        : [],
+    );
+
+  it("repère une déclaration amputée du chiffre de l'article", async () => {
+    const report = await runSource(createMaxifoot(fixtureFetcher()), ampute(), { sleep: noSleep });
+
+    const brief = report.outcomes.find((o) => o.claims.some((c) => c.player === "Bouaddi"));
+    assert.ok(brief, "la déclaration est bien retenue — c'est tout le problème");
+    assert.equal(brief.claims[0]!.feeEur, null, "et elle ne porte aucun montant");
+    assert.ok(brief.unclaimedFees.includes(100_000_000), "les 100 M€ du texte sont signalés");
+    assert.equal(report.unclaimed, 1, "le rapport compte l'article, une fois");
+
+    // Les trois cadrans existants ne bronchent pas : c'est exactement pour ça
+    // qu'il en fallait un quatrième.
+    assert.equal(rejectionRate(report), 0);
+    assert.equal(brief.rejected.length, 0);
+    assert.ok(!report.outcomes.filter((o) => o.claims.length > 0).some((o) => o.duplicates > 0));
+  });
+
+  it("ne compte pas un article muet : c'est déjà un silence", async () => {
+    // Compter les deux ferait apparaître une même panne dans deux cadrans, et
+    // les deux correctifs ne sont pas les mêmes.
+    const report = await runSource(
+      createMaxifoot(fixtureFetcher()),
+      fakeExtractor(() => []),
+      { sleep: noSleep },
+    );
+
+    assert.equal(report.silent, report.extracted);
+    assert.equal(report.unclaimed, 0, "un silence n'est pas une déclaration amputée");
+  });
+
+  it("tient pour repris le montant rangé en bonus", async () => {
+    // Le modèle a bien VU le chiffre : il l'a classé ailleurs. C'est une erreur
+    // de champ, pas un oubli, et les deux appellent des correctifs différents.
+    const report = await runSource(
+      createMaxifoot(fixtureFetcher()),
+      fakeExtractor((sentences) =>
+        sentences.some((phrase) => /Bouaddi/.test(phrase))
+          ? [{
+              player: "Bouaddi", fromClub: "Lille", toClub: "Manchester City",
+              feeText: null, bonusText: "100 M€", feeKind: "transfert",
+              stance: "officiel", sentence: 0,
+            }]
+          : [],
+      ),
+      { sleep: noSleep },
+    );
+
+    const brief = report.outcomes.find((o) => o.claims.some((c) => c.player === "Bouaddi"));
+    assert.ok(brief);
+    assert.equal(brief.claims[0]!.bonusEur, 100_000_000);
+    assert.ok(!brief.unclaimedFees.includes(100_000_000), "un montant rangé en bonus n'est pas un oubli");
+  });
+});

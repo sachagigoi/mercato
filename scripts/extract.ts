@@ -90,6 +90,13 @@ function show(o: ArticleOutcome, verbose: boolean) {
   // Un modèle bavard rend le même transfert une fois par phrase. Le montrer
   // par article dit lequel, et à quel point.
   if (o.duplicates > 0) console.log(`      = ${o.duplicates} doublon${o.duplicates > 1 ? "s" : ""} replié${o.duplicates > 1 ? "s" : ""}`);
+  // Le chiffre que l'article porte et que la déclaration ne reprend pas. À
+  // INSPECTER, pas à corriger d'office : une clause de rachat ou un salaire
+  // apparaissent ici, et le modèle a raison de ne pas les remonter en
+  // indemnité. C'est quand ça ressemble au prix du transfert qu'il faut agir.
+  if (o.claims.length > 0 && o.unclaimedFees.length > 0) {
+    console.log(`      ? montant du texte non repris : ${o.unclaimedFees.map(euros).join(", ")}`);
+  }
   for (const r of o.rejected) {
     console.log(`      ✗ rejeté : ${r.reason}`);
     // Le rejet seul ne dit pas POURQUOI le modèle s'est trompé. Sans ce que
@@ -172,7 +179,7 @@ async function main() {
 ─────────────────────────────────────────────
   ${report.listed} au flux → ${report.fetched} récupérés → ${report.extracted} soumis au modèle
   ${report.claims} déclarations retenues · ${report.rejected} rejetées · ${report.outOfScope} hors périmètre
-  ${report.silent} article${report.silent > 1 ? "s" : ""} sans rien en tirer${report.extracted ? ` (${Math.round((report.silent / report.extracted) * 100)} %)` : ""}${report.duplicates ? `\n  ${report.duplicates} doublon${report.duplicates > 1 ? "s" : ""} replié${report.duplicates > 1 ? "s" : ""}` : ""}
+  ${report.silent} article${report.silent > 1 ? "s" : ""} sans rien en tirer${report.extracted ? ` (${Math.round((report.silent / report.extracted) * 100)} %)` : ""}${report.duplicates ? `\n  ${report.duplicates} doublon${report.duplicates > 1 ? "s" : ""} replié${report.duplicates > 1 ? "s" : ""}` : ""}${report.unclaimed ? `\n  ${report.unclaimed} déclaration${report.unclaimed > 1 ? "s" : ""} laissant un montant du texte (à inspecter)` : ""}
   taux de rejet ${(rejectionRate(report) * 100).toFixed(0)} %
   ${seconds.toFixed(0)} s de modèle${report.extracted ? ` · ${(seconds / report.extracted).toFixed(0)} s par article` : ""}`);
   for (const e of report.errors) console.log(`  ! ${e}`);

@@ -2,7 +2,7 @@ import type { Article, PressSource } from "../articles.ts";
 import type { PublishInput } from "../declarations.ts";
 import { acceptClaim, dedupeClaims, inScope, type AcceptedClaim, type Rejected } from "./claims.ts";
 import { MissingModelError, type Extractor } from "./ollama.ts";
-import { prefilter } from "./prefilter.ts";
+import { findAmounts, prefilter } from "./prefilter.ts";
 
 /**
  * Le passage complet, de la source aux déclarations vérifiées.
@@ -29,6 +29,26 @@ export type ArticleOutcome = {
   outOfScope: number;
   /** Déclarations repliées parce qu'elles répétaient la même, sur cet article. */
   duplicates: number;
+  /**
+   * Montants **présents dans l'article** qu'aucune déclaration retenue ne
+   * reprend, en euros.
+   *
+   * Le premier envoi réel a montré l'angle mort que les trois cadrans
+   * existants laissaient : sur « OM : Timber veut signer à Crystal Palace »,
+   * le modèle a rendu une déclaration juste, sans les « environ 20 millions
+   * d'euros » de la dernière phrase — que le préfiltre, lui, lisait sans
+   * peine. Le taux de rejet ne bougeait pas, le compteur de silence non plus
+   * (l'article a bien produit quelque chose), et `enriched` restait à zéro
+   * sans dire pourquoi. Sur un produit dont le montant EST le produit, une
+   * déclaration amputée passait pour un succès.
+   *
+   * **Ce n'est pas un compte de fautes**, et le confondre avec ça en referait
+   * un cadran flatteur à l'envers : tout chiffre d'un article n'est pas une
+   * indemnité de transfert. La clause de rachat de 3 M€ des brèves Lago
+   * apparaît ici, et le modèle avait raison de ne pas la remonter. C'est un
+   * indicateur À INSPECTER — sa part qui monte dit qu'il faut aller lire.
+   */
+  unclaimedFees: number[];
   /** Durée de l'appel au modèle. Le chiffre qui dit si la cadence tient. */
   ms: number;
   /**
@@ -69,6 +89,16 @@ export type RunReport = {
    * d'aucun mouvement. C'est sa PART qui alerte.
    */
   silent: number;
+  /**
+   * Articles qui ont produit une déclaration retenue **et** laissent un
+   * montant du texte non repris. Le pendant du compteur de silence : celui-ci
+   * voit les articles muets, celui-là les déclarations amputées.
+   *
+   * Restreint aux articles qui ont produit quelque chose, à dessein : un
+   * article chiffré dont rien n'est tiré est déjà compté comme silence, et le
+   * compter deux fois brouillerait les deux pannes.
+   */
+  unclaimed: number;
   msTotal: number;
   outcomes: ArticleOutcome[];
   errors: string[];
@@ -99,7 +129,7 @@ export async function runSource(
 
   const report: RunReport = {
     listed: 0, fetched: 0, extracted: 0, claims: 0, rejected: 0,
-    outOfScope: 0, silent: 0, duplicates: 0, msTotal: 0, outcomes: [], errors: [],
+    outOfScope: 0, silent: 0, duplicates: 0, unclaimed: 0, msTotal: 0, outcomes: [], errors: [],
   };
 
   const items = await source.listRecent();
@@ -134,7 +164,8 @@ export async function runSource(
       const outcome: ArticleOutcome = {
         article,
         skipped: gate.reason === "ok" ? null : gate.reason,
-        claims: [], rejected: [], outOfScope: 0, duplicates: 0, ms: 0, raw: "", sentences: gate.sentences,
+        claims: [], rejected: [], outOfScope: 0, duplicates: 0, unclaimedFees: [],
+        ms: 0, raw: "", sentences: gate.sentences,
       };
       report.outcomes.push(outcome);
       options.onArticle?.(outcome);
@@ -191,9 +222,22 @@ export async function runSource(
     report.rejected += rejected.length;
     if (kept.length === 0 && rejected.length === 0 && outOfScope === 0) report.silent += 1;
 
+    // Le préfiltre sait déjà lire les montants de l'article : les comparer à
+    // ceux que le modèle rapporte donne un compteur d'oublis SANS étiquetage
+    // manuel. Le bonus compte comme repris — le modèle a bien vu le chiffre,
+    // il l'a rangé ailleurs.
+    const claimed = new Set<number>();
+    for (const c of kept) {
+      if (c.feeEur !== null) claimed.add(c.feeEur);
+      if (c.bonusEur !== null) claimed.add(c.bonusEur);
+    }
+    const inArticle = new Set(gate.sentences.flatMap((s) => findAmounts(s).map((a) => a.eur)));
+    const unclaimedFees = [...inArticle].filter((eur) => !claimed.has(eur)).sort((a, b) => b - a);
+    if (kept.length > 0 && unclaimedFees.length > 0) report.unclaimed += 1;
+
     const outcome: ArticleOutcome = {
-      article, skipped: null, claims: kept, rejected, outOfScope, duplicates: folded, ms,
-      raw: rawText, sentences: gate.sentences,
+      article, skipped: null, claims: kept, rejected, outOfScope, duplicates: folded,
+      unclaimedFees, ms, raw: rawText, sentences: gate.sentences,
     };
     report.outcomes.push(outcome);
     options.onArticle?.(outcome);
