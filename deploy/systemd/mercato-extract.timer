@@ -1,0 +1,33 @@
+# Le rythme de l'extraction.
+#
+# Toutes les 30 minutes, comme l'ingestion Transfermarkt — mais les deux ne
+# sont pas contraintes par la même chose. L'ingestion est bornée par la
+# politesse envers la source ; celle-ci est bornée par le CPU du mini PC.
+#
+# Le journal `.mercato-seen.json` fait qu'un passage ne traite que les brèves
+# NOUVELLES : relancer souvent ne coûte presque rien quand le flux n'a pas
+# bougé. C'est ce qui rend un intervalle court raisonnable.
+
+[Unit]
+Description=Mercato — extraction de presse toutes les 30 minutes
+Requires=mercato-extract.service
+
+[Timer]
+# Cinq minutes après le démarrage, pour ne pas concurrencer le boot ni Ollama
+# qui charge son modèle.
+OnBootSec=5min
+OnUnitActiveSec=30min
+
+# Décalage aléatoire : sans lui, toutes les machines d'un même déploiement
+# taperaient la source à la même seconde. Une seule machine ici, mais l'habitude
+# est bonne et ça évite de tomber pile sur la minute ronde du flux RSS.
+RandomizedDelaySec=3min
+
+# Rattraper un déclenchement manqué. Le mini PC n'est pas un serveur : s'il a
+# dormi, on veut le passage au réveil, pas l'attente du créneau suivant.
+Persistent=true
+
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

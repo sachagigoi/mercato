@@ -287,6 +287,71 @@ club que le rapprochement n'arrive pas à faire coïncider.
 
 ---
 
+## 8. Faire tourner l'extraction sans y penser
+
+**Le mini PC est la seule machine qui puisse faire ce travail** : le modèle y
+vit, et Vercel n'a pas d'Ollama — une fonction serverless plafonnée à 60 s ne
+tiendrait de toute façon pas 35 s par article. La conséquence à connaître :
+**l'ingestion Transfermarkt tourne toute seule toutes les 30 min sur GitHub
+Actions, la presse ne tourne que quand cette machine la lance.**
+
+Les deux unités sont dans `deploy/systemd/`. À poser en *user units*, pas en
+services système : elles tournent avec ton compte, ton dépôt, ton Ollama.
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd/mercato-extract.{service,timer} ~/.config/systemd/user/
+
+# Les deux secrets, hors de l'unité — `systemctl cat` l'affiche en clair.
+cat > ~/.mercato.env <<'ENV'
+MERCATO_URL=https://…
+CRON_SECRET=…
+ENV
+chmod 600 ~/.mercato.env
+
+systemctl --user daemon-reload
+systemctl --user enable --now mercato-extract.timer
+```
+
+**Un dernier réglage, sans quoi rien ne tournera quand tu n'es pas connecté :**
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+Sans `linger`, systemd arrête les unités utilisateur à la déconnexion. C'est le
+piège classique d'un timer *user* sur une machine sans session ouverte.
+
+### Vérifier
+
+```bash
+systemctl --user list-timers mercato-extract.timer   # prochain déclenchement
+systemctl --user start mercato-extract.service       # forcer un passage
+journalctl --user -u mercato-extract.service -f      # le rapport, en direct
+```
+
+### Les choix, et pourquoi
+
+| Choix | Raison |
+|---|---|
+| `Type=oneshot` | Le service n'est pas un démon : il tourne, il finit, il meurt. C'est le timer qui décide du rythme. Un service qui se relancerait seul empilerait les passages quand le modèle traîne. |
+| `EnvironmentFile` | `systemctl cat` affiche l'unité en clair à qui peut la lire. Les secrets vivent à côté, en `chmod 600`. |
+| Chemin absolu de `npm` | systemd ne lit pas le profil du shell. Un `npm` introuvable est l'échec le plus fréquent d'une unité qui marchait à la main — vérifier avec `command -v npm`. |
+| `After=ollama.service` | Un passage lancé avant qu'Ollama réponde échoue sur les cinq articles d'affilée. |
+| `Restart=no` | Un échec d'envoi n'écrit pas le journal des articles vus : le lot repart au déclenchement suivant. Insister n'apporte rien. |
+| `Persistent=true` | Le mini PC n'est pas un serveur. S'il a dormi, on veut le passage au réveil, pas l'attente du créneau suivant. |
+| `RandomizedDelaySec` | Éviter de taper la source pile à la minute ronde. |
+| 30 minutes | Le journal `.mercato-seen.json` fait qu'un passage ne traite que les brèves **nouvelles** : quand le flux n'a pas bougé, le passage ne coûte qu'un GET. C'est ce qui rend un intervalle court raisonnable. |
+
+### Ce que ça ne règle pas
+
+Une piste créée depuis la presse n'a **pas de `tm_player_id`** : ni portrait ni
+valeur de marché ne peuvent être résolus pour elle, faute de fiche
+Transfermarkt à interroger. Elle reste une carte au masque circulaire vide,
+sans jauge de valeur. Le rapprochement corrige ce cas quand la même piste
+existe déjà côté Transfermarkt — mais pas quand la presse est la première, ou
+la seule, à en parler.
+
 ## Comment ça marche, en une page
 
 ```

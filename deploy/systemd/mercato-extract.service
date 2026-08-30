@@ -1,0 +1,53 @@
+# Extraction de presse — un passage, puis on rend la main.
+#
+# Type=oneshot : le service N'EST PAS un démon. Il tourne, il finit, il meurt ;
+# c'est le timer qui décide du rythme. Un service qui se relancerait tout seul
+# empilerait les passages en cas de lenteur du modèle — sur CPU, un article
+# coûte ~35 s, et un lot de cinq peut dépasser trois minutes.
+
+[Unit]
+Description=Mercato — extraction des brèves de presse (Ollama local)
+Documentation=file://%h/mercato/docs/EXTRACTION.md
+# Le passage a besoin du réseau (flux RSS, articles, /api/claims) ET d'Ollama.
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+WorkingDirectory=%h/mercato
+
+# Les deux secrets vivent dans un fichier à part, jamais dans l'unité :
+# `systemctl cat` affiche l'unité en clair à qui peut la lire.
+#   ~/.mercato.env  (chmod 600)
+#     MERCATO_URL=https://…
+#     CRON_SECRET=…
+EnvironmentFile=%h/.mercato.env
+
+# Le chemin absolu de npm : systemd ne lit pas le profil du shell, et un `npm`
+# introuvable est l'échec le plus fréquent d'une unité qui marchait à la main.
+# Vérifier avec `command -v npm`, et corriger ici si besoin.
+ExecStart=/usr/bin/npm run extract -- --send --limit 5
+
+# Un passage qui traîne est un passage bloqué : le tuer vaut mieux que le voir
+# chevaucher le suivant. 5 articles x ~35 s = ~3 min, on laisse large.
+TimeoutStartSec=15min
+
+# Un échec ne doit pas être silencieux, mais il ne doit pas non plus insister :
+# le journal des articles vus n'est pas écrit en cas d'échec d'envoi, donc le
+# lot sera repris au prochain déclenchement. Rien à rattraper.
+Restart=no
+
+# Durcissement — le service ne lit qu'un dépôt et n'écrit qu'un fichier journal.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# … sauf le dépôt lui-même : `.mercato-seen.json` s'y écrit.
+ReadWritePaths=%h/mercato
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=default.target
