@@ -92,6 +92,11 @@ class FakeMediaStore implements MediaStore {
 const raw = (over: Partial<RawTransferInput> & { externalId: string }): RawTransferInput => ({
   playerName: "Joueur Test",
   type: "RUMOUR",
+  // Un club de Ligue 1 par défaut : depuis que l'ingestion a une porte de
+  // périmètre, une rumeur sans aucun club n'entre plus. Les tests de ce
+  // fichier mesurent l'idempotence, la tendance et la normalisation — pas le
+  // périmètre, qui a ses propres cas plus bas.
+  fromClub: "Olympique Lyonnais",
   ...over,
 });
 
@@ -292,5 +297,77 @@ describe("lots", () => {
     assert.equal(transfers.rows.size, many.length);
     assert.equal(transfers.upsertCalls, 3);
     assert.equal(report.inserted, many.length);
+  });
+});
+
+describe("le périmètre Ligue 1, à l'ingestion", () => {
+  // Transfermarkt sert une page de rumeurs MONDIALE. Mesuré sur un flux réel :
+  // 8 rumeurs sur 85 concernent la L1. Les 77 autres ne coûtaient pas que de la
+  // place — chaque ligne entre dans la file des valeurs de marché et dans celle
+  // du détourage, qui sont le goulot visible du produit.
+
+  it("écarte une rumeur qui ne touche aucun club de Ligue 1", async () => {
+    const report = await ingest(
+      [raw({ externalId: "x", fromClub: "SSC Napoli", toClub: "Venezia FC" })],
+      stores(),
+    );
+
+    assert.equal(report.inserted, 0);
+    assert.equal(report.outOfScope, 1);
+    assert.equal(transfers.rows.size, 0);
+    // Et surtout : rien n'entre dans la file des visuels.
+    assert.equal(media.queued.length, 0, "un hors-périmètre ne doit rien mettre en file");
+  });
+
+  it("garde une ARRIVÉE en Ligue 1", async () => {
+    const report = await ingest(
+      [raw({ externalId: "x", fromClub: "Bayer 04 Leverkusen", toClub: "Stade Rennais FC" })],
+      stores(),
+    );
+    assert.equal(report.inserted, 1);
+    assert.equal(report.outOfScope, 0);
+  });
+
+  it("garde un DÉPART de Ligue 1", async () => {
+    // Le cas que la compétition de destination — seul champ de périmètre que le
+    // scraper remonte — ne saurait pas attraper. Un départ vers l'étranger est
+    // exactement ce qu'un feed mercato français doit montrer.
+    const report = await ingest(
+      [raw({ externalId: "x", fromClub: "Olympique Marseille", toClub: "Racing Santander" })],
+      stores(),
+    );
+    assert.equal(report.inserted, 1);
+    assert.equal(report.outOfScope, 0);
+  });
+
+  it("ne prend pas une équipe réserve pour son club premier", async () => {
+    // Vu sur le flux réel : « Paris Saint-Germain Espoirs ». Le référentiel ne
+    // le résout pas, et c'est le comportement voulu — un feed de première
+    // équipe n'a rien à dire d'un mouvement de réserve.
+    const report = await ingest(
+      [raw({ externalId: "x", fromClub: "Paris Saint-Germain Espoirs", toClub: "Ipswich Town" })],
+      stores(),
+    );
+    assert.equal(report.outOfScope, 1);
+  });
+
+  it("distingue le hors-périmètre d'une ligne illisible", async () => {
+    // `skipped` dit « la ligne était inutilisable » ; `outOfScope` dit « elle
+    // était lisible et ne nous concerne pas ». Les confondre masquerait une
+    // source qui change de format derrière un chiffre qu'on s'attend à voir
+    // gros.
+    const report = await ingest(
+      [
+        raw({ externalId: "ok", fromClub: "RC Lens", toClub: "Paris Saint-Germain" }),
+        raw({ externalId: "loin", fromClub: "SSC Napoli", toClub: "US Lecce" }),
+        { externalId: "cassé" },
+      ],
+      stores(),
+    );
+
+    assert.equal(report.inserted, 1);
+    assert.equal(report.outOfScope, 1);
+    assert.equal(report.skipped, 1);
+    assert.equal(report.errors.length, 1);
   });
 });

@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --experimental-strip-types 'lib/**/*.test.ts'"
+    "test": "node --test --experimental-strip-types 'lib/**/*.test.ts'",
+    "extract": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/extract.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.58.0",
@@ -25,5 +26,8 @@
     "@types/react-dom": "^19.2.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=22.6"
   }
 }

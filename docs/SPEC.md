@@ -14,7 +14,9 @@ secrets GitHub du workflow et la validation du Realtime.**
 
 **Historique :** Base en ligne et vérifiée, carte et grille en place, filtres et
 Realtime branchés, pipeline d'ingestion idempotent et route cron protégée — cf. §11.
-Reste la Phase 4 : scraper réel et détourage.
+
+**En cours, au-delà du MVP :** le pipeline multi-sources qui capture le montant
+d'un transfert dans la prose de presse — §13.
 
 ---
 
@@ -257,6 +259,58 @@ Deux points non négociables :
   voulu, mais il faut le savoir : dépublier n'envoie pas d'événement de suppression au client déjà
   connecté, il faut un refetch.
 
+
+### 2.7 Tables `press_articles` et `declarations`
+
+La frontière est nette et elle porte tout le pipeline multi-sources (§13) :
+`transfers` porte l'état **courant** d'une piste, celui qu'affiche le feed ;
+`declarations` porte les **observations** qui l'ont fait bouger, une par source
+et par passage. La première s'écrase, la seconde s'empile.
+
+C'est ce qui rend le produit défendable. Quand une carte affiche « 50 M€ », on
+peut montrer l'article, la phrase exacte, le modèle et la version de consigne
+qui l'ont produite. Un montant écrasé au fil des sources ne saurait rien
+répondre.
+
+```sql
+create type public.claim_stance    as enum ('rumeur','discussions','accord','officiel','dementi');
+create type public.claim_fee_kind  as enum ('transfert','pret','pret_avec_option','clause','libre','inconnu');
+create type public.claim_qualifier as enum ('exact','environ','minimum','maximum');
+
+create table public.press_articles (
+  id, source, source_tier, guid unique, url, title,
+  published_at, first_seen_at, last_extracted_at
+);
+
+create table public.declarations (
+  id, claim_key unique, article_id -> press_articles, transfer_id -> transfers,
+  player_name, player_normalized,
+  from_club_name, from_club_key, to_club_name, to_club_key,
+  fee_eur, fee_label, fee_kind, qualifier, bonus_eur, stance,
+  quote, fee_quote, player_in_quote,
+  model, prompt_version, published_at, created_at
+);
+```
+
+| Choix | Pourquoi |
+|---|---|
+| `model` et `prompt_version` **sur la déclaration**, pas sur l'article | L'article est un fait du monde, l'extraction un fait de notre pipeline. Rejouer un corpus avec un autre modèle ne doit pas réécrire la provenance. |
+| Les deux dans `claim_key` | Un second modèle produit une ligne **comparable**, pas un écrasement. Sans ça, aucun banc d'essai ne peut mesurer un changement de modèle sur de vrais articles. |
+| Le libellé brut **et** la clé résolue | Le brut permet de rejouer une résolution ratée. Le perdre rendrait toute correction du référentiel inapplicable au passé. |
+| `transfer_id` nul par défaut | Une déclaration existe indépendamment de ce qu'elle enrichit, et peut arriver **avant** la rumeur qui la concerne. Le rapprochement (§13.7) la rattache ensuite, à la réception puis après chaque moisson. |
+| `quote` obligatoire | Sans citation, une déclaration n'est qu'une affirmation. C'est ce champ qui autorise à afficher un montant sans demander qu'on nous croie. |
+
+Index : `declarations_pending_idx` (file du rapprochement, `where transfer_id is
+null`), `declarations_player_idx` (le rapprochement part du nom), et
+`declarations_transfer_idx` (l'historique d'une piste, `where transfer_id is not
+null`). Les trois sont partiels ou composites pour la même raison que ceux de
+`transfers` : ils sont taillés sur les requêtes qui existent, pas sur celles
+qu'on imagine.
+
+RLS activée, **aucune policy** — comme `media_cache`. Les deux tables portent de
+la matière de travail, pas du contenu publiable ; seul `service_role` y accède.
+Le feed lit `transfers`, qui reste la seule table exposée.
+
 ---
 
 ## 3. Arborescence
@@ -267,6 +321,7 @@ app/
   page.tsx                      # RSC : fetch initial 60 lignes
   globals.css                   # @theme Tailwind v4 + tokens
   api/cron/ingest/route.ts      # runner d'ingestion (GET pour Vercel Cron, POST manuel)
+  api/claims/route.ts           # réception des déclarations du mini PC (§13)
   preview/page.tsx              # banc de rendu des composants (§4.8)
   preview/feed/page.tsx         # banc d'interaction du feed (§4.8)
 components/
@@ -300,13 +355,29 @@ lib/
   market-value.ts               # résolution des valeurs, une fiche par joueur
   market-value.test.ts          # 7 tests, dont l'arrêt après trois échecs
   fixtures.ts                   # jeu de cas limites du banc de rendu
+  declarations.ts               # point de passage unique vers declarations (§13)
+  reconcile.ts                  # rapprochement déclaration -> piste (§13.7)
+  reconcile.test.ts             # 21 tests, dont les deux erreurs qui ne se valent pas
+  declarations.test.ts          # 11 tests, dont l'idempotence et la comparaison de modèles
+  articles.ts                   # contrat commun à toutes les sources de presse
+  referential.ts                # les 18 clubs de L1, alias de presse compris
+  sources/maxifoot.ts           # flux RSS + corps d'article (ISO-8859-1)
+  sources/maxifoot.test.ts      # 14 tests contre 5 brèves réellement enregistrées
+  extract/prefilter.ts          # porte L1, montants en prose, phrases numérotées
+  extract/claims.ts             # schéma contraint + garde-fou
+  extract/ollama.ts             # client Ollama, consigne versionnée
+  extract/run.ts                # le passage complet, source -> déclarations
   types.ts                      # types générés depuis Supabase
 public/demo/                    # gabarits de portrait (Phase 1)
 scripts/
   cutout.py                     # worker de détourage (hors bundle Next.js)
+  extract.ts                    # worker d'extraction, tourne sur le mini PC (§13)
   requirements.txt              # rembg, pillow, httpx, supabase
 .github/workflows/
   cutout.yml                    # cron GitHub Actions, */20
+docs/
+  SPEC.md                       # ce document
+  EXTRACTION.md                 # mode d'emploi du worker du mini PC
 supabase/
   migrations/                   # SQL versionné
   seed.sql                      # 24 lignes de démo
@@ -639,6 +710,23 @@ Ni Vercel, ni Render.
   le recharge. Trop fragile pour une brique qu'on veut oublier.
 - **Render** : les *background workers* et les *cron jobs* y sont payants (7 $/mois). On vient de
   retirer Render pour de bonnes raisons, le réintroduire pour ça serait un mauvais échange.
+
+Un corollaire, tiré du sixième : **ce que le code peut trancher exactement, le
+code le tranche.** Le champ `qualifier` a passé six passages à sortir `exact`
+parce qu'on le demandait au modèle, alors que « environ » et « au moins »
+figurent dans la phrase, juste avant le chiffre qu'on vient d'y localiser.
+
+Et un avertissement sur la mesure elle-même : **chaque cadran finit par être
+optimisé**. Le taux de rejet ignorait les oublis, jusqu'à ce qu'un passage en
+laisse filer un. Le compte de déclarations récompensait le bavardage, jusqu'à
+ce qu'un modèle rende cinq fois le même transfert. Un tableau de bord se
+corrige aussi souvent que le code qu'il mesure.
+
+Le neuvième passage a fixé la limite de fond de ce cadran : **un taux de rejet
+compte ce que le garde-fou attrape, pas ce qui est vrai.** Un lot à 0 % de
+rejet peut contenir une carte fausse, et en contenait une. Aucun resserrage du
+garde-fou ne changera ça — c'est la raison d'être du banc d'essai sur articles
+étiquetés, seul instrument qui mesure la justesse plutôt que la conformité.
 - **GitHub Actions** *(retenu)* : gratuit, timeout de 6 h, runner à 16 Go, secrets intégrés, et on y
   installe ce qu'on veut. Le job n'est pas critique en latence — la carte s'affiche déjà avec le
   masque circulaire en attendant. Limites connues et acceptées : les crons GitHub sont *best effort*
@@ -715,7 +803,18 @@ CRON_SECRET=                         # serveur uniquement
 # GitHub Actions (Settings > Secrets > Actions) — worker de détourage
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=           # le même, dupliqué côté Actions
+
+# Mini PC — worker d'extraction (§13). Aucun secret Supabase ici.
+MERCATO_URL=                         # https://mercato-two-zeta.vercel.app
+CRON_SECRET=                         # le même jeton porteur que le cron
+OLLAMA_URL=                          # défaut http://127.0.0.1:11434
+OLLAMA_MODEL=                        # défaut qwen2.5:7b-instruct-q4_K_M
 ```
+
+**Le mini PC ne détient aucune clé Supabase.** Il parle à `/api/claims`, qui
+valide, résout et écrit. Un jeton volé là-bas permet d'envoyer des déclarations
+malformées — que le schéma refuse — pas de toucher à la base. C'est cette
+frontière qui rend la machine remplaçable.
 
 Le worker a besoin de la `service_role` : il écrit dans Storage et met à jour deux tables. C'est le
 seul secret partagé entre Vercel et GitHub Actions — le rotationner impose de le faire aux deux
@@ -959,6 +1058,45 @@ Sans cela, `/preview` reste le moyen de travailler le design, puisqu'il ne dépe
 Transfermarkt fournit portraits et écussons sans clé ni quota. La route dégrade
 proprement quand `API_FOOTBALL_KEY` est absente — ne pas la remettre.
 
+### Le périmètre Ligue 1 vaut pour TOUTES les sources
+
+La porte L1 n'existait que du côté presse. L'ingestion Transfermarkt moissonne
+`statistik/aktuellegeruechte` — la page des rumeurs **mondiale** — et insérait
+tout. Mesuré sur la base réelle : **11 rumeurs sur 138 touchaient la Ligue 1**.
+
+Les 91 % restants ne coûtaient pas que de la place. Chaque ligne entre dans la
+file des valeurs de marché et dans celle du détourage, et **ces files sont le
+goulot visible du produit** : 58 fiches en attente à dix par passage, dont ~53
+pour des joueurs que le feed n'a pas vocation à montrer. Après filtrage, la
+file est tombée à 3.
+
+**Les deux sens comptent.** Filtrer sur la seule compétition de destination —
+le champ que le scraper remonte déjà — ne garderait que les ARRIVÉES. Un départ
+de L1 vers l'étranger est exactement ce qu'un feed mercato français doit
+montrer. La porte s'appuie donc sur le **même référentiel que la chaîne
+presse**, appliqué aux deux clubs : une seule définition du périmètre, sans
+quoi une correction d'alias s'appliquerait d'un côté et pas de l'autre.
+
+`outOfScope` est compté à part de `skipped` : le premier dit « lisible, mais
+hors sujet », le second « inutilisable ». Les confondre masquerait une source
+qui change de format derrière un chiffre qu'on s'attend à voir gros.
+
+**Le nettoyage de l'existant a failli mal tourner, deux fois.**
+
+D'abord parce que la liste des lignes à conserver avait été calculée sur un
+instantané, et que le cron a moissonné entre-temps : 85 rumeurs au moment du
+calcul, 116 au moment du `DELETE`. Un `delete ... where id not in (liste)`
+aurait supprimé des rumeurs L1 arrivées depuis, jamais examinées. **On énumère
+ce qu'on supprime, jamais « tout sauf ».**
+
+Ensuite parce que la règle réécrite en SQL ne disait pas la même chose que le
+code : une recherche par sous-chaîne là où `resolveLigue1Club` fait une
+correspondance **exacte** du libellé entier. Les deux règles ont été comparées
+ligne à ligne avant toute suppression, et divergeaient sur un cas — « Paris
+Saint-Germain Espoirs », qu'une sous-chaîne aurait gardé. Une équipe réserve
+n'a rien à faire dans un feed de première équipe : c'est la règle exacte qui
+fait foi.
+
 ### Le déploiement Vercel
 
 | | |
@@ -968,7 +1106,7 @@ proprement quand `API_FOOTBALL_KEY` est absente — ne pas la remettre.
 | Production | <https://mercato-two-zeta.vercel.app> |
 | Variables | Les quatre posées, sur les trois environnements |
 | Protection | Vercel Authentication désactivée — la route cron doit rester joignable depuis GitHub Actions |
-| Région des fonctions | `iad1` (Washington), à rapprocher de la base — voir plus bas |
+| Région des fonctions | `cdg1` (Paris), fixée dans `vercel.json` — la base est en `eu-west-3` |
 
 Tout `push` sur la branche de production redéploie en production ; un `push` sur
 une autre branche produit un déploiement de prévisualisation. Les outils MCP
@@ -1018,21 +1156,51 @@ faudrait retrouver chaque ancienne rumeur dans une page qui ne les liste plus.
 Les lignes moissonnées avant cette version resteront donc hors des puces de
 pays jusqu'à leur sortie du feed.
 
-**3. Vérifier le Realtime.** C'est le seul morceau du MVP **jamais validé en
-conditions réelles** : la WebSocket ne s'établit pas depuis une session Claude
-Code web, et le repli polling 60 s prend le relais en masquant le problème. Le
-HTML servi ne tranche pas davantage — l'indicateur part de « Connexion » et ne
-bascule qu'une fois le canal souscrit, donc dans un vrai navigateur.
-Ouvrir le feed, confirmer que l'indicateur de la barre de filtres affiche
-**« En direct »** et non « Différé 60 s », puis faire un `update` de
-`probability_score` en SQL et vérifier que la jauge bouge sans rechargement.
+**3. Vérifier le Realtime — moitié faite.** Le point restait entier faute de
+navigateur. Il se coupe en deux, et **la moitié serveur est désormais vérifiée
+en base** :
 
-**4. Rapprocher les fonctions de la base.** Le projet a été créé en `iad1`
-(Washington) alors que la base est en `eu-west-3` (Paris) : chaque rendu
-serveur du feed traverse l'Atlantique deux fois. *Settings > Functions >
-Function Region* → `cdg1`. Le plan Hobby autorise une région, changeable
-gratuitement, et le gain porte directement sur le TTFB, donc sur le critère
-Lighthouse du §9.
+| Fait | Constat |
+|---|---|
+| `public.transfers` dans la publication `supabase_realtime` | oui — `insert`, `update` et `delete` |
+| `replica identity` de `transfers` | `full` : l'ancien enregistrement voyage avec le nouveau |
+| Contrôle d'accès du canal | `transfers_public_read` accordée à `anon` — Realtime applique la RLS du rôle qui s'abonne, l'abonné anonyme passe |
+| `declarations`, `press_articles`, `media_cache` | RLS active, **aucune policy**, et **hors publication** : pas de fuite par le canal non plus |
+
+Ce dernier point vaut d'être noté : rendre une table invisible côté client ne
+dit rien de sa diffusion en temps réel. Les deux portes sont fermées, mais ce
+sont bien **deux** portes.
+
+Reste la jambe cliente, et elle seule : **la WebSocket depuis un vrai
+navigateur.** Elle ne s'établit pas depuis une session Claude Code web — non
+que l'hôte soit injoignable, comme on l'a d'abord cru : une requête HTTP
+atteint bien `…supabase.co/realtime/v1/websocket`, qui répond
+`401 MISSING_API_KEY`. C'est le relais TLS de l'environnement qui coupe la
+poignée de main de Chromium, connexion réinitialisée après 39 octets. Le repli
+polling 60 s masque alors le problème, et le HTML servi ne tranche pas
+davantage — l'indicateur part de « Connexion » et ne bascule qu'une fois le
+canal souscrit.
+
+Ouvrir le feed dans un navigateur ordinaire, confirmer que l'indicateur de la
+barre de filtres affiche **« En direct »** et non « Différé 60 s », puis faire
+un `update` de `probability_score` en SQL et vérifier que la jauge bouge sans
+rechargement.
+
+**4. Rapprocher les fonctions de la base — fait.** Le projet avait été créé en
+`iad1` (Washington) alors que la base est en `eu-west-3` (Paris) : chaque rendu
+serveur du feed traversait l'Atlantique deux fois. La région est désormais
+`cdg1`, **posée dans `vercel.json`** plutôt que dans le dashboard — la
+configuration prime sur le réglage de projet, et vit dans le dépôt : elle se
+relit, se révise en revue, et survit à une recréation du projet. Le plan Hobby
+autorise une région, et le gain porte directement sur le TTFB, donc sur le
+critère Lighthouse du §9.
+
+Vérifié sur le déploiement de prévisualisation, en comparant l'en-tête
+`x-vercel-id` de la preview et de la production sur la même requête :
+`iad1::cdg1::…` contre `iad1::iad1::…`. Le premier segment est le PoP
+d'entrée, le second la région d'exécution — c'est celui-là qui a bougé. **La
+production restera en `iad1` jusqu'à la fusion** : c'est la branche de
+production qui porte le réglage.
 
 ### Pièges d'environnement rencontrés
 
@@ -1047,3 +1215,241 @@ Lighthouse du §9.
 - **Variables d'environnement Vercel** : ni les outils MCP ni la CLI ne sont
   disponibles pour les poser. Une session qui reprend le sujet doit passer par
   le dashboard, ou disposer d'un token Vercel.
+
+---
+
+## 13. Pipeline multi-sources — de l'article à la piste
+
+Le feed sait dire *qu'un* transfert se murmure. Il ne sait pas dire **combien**,
+parce que Transfermarkt ne publie pas de montant sur une rumeur. Or c'est
+exactement l'écart qui intéresse : la valeur marchande du joueur **face à** la
+valeur du transfert évoquée par la presse.
+
+Ce montant existe, mais en prose : « l'OL réclame 40 M€ pour céder son ailier ».
+Il n'y a pas de source structurée à brancher — il faut le **capturer**, article
+par article, et l'attacher à la bonne piste.
+
+### 13.1 Le sens du pipeline : de l'article vers la piste
+
+Deux directions étaient possibles. Partir des rumeurs Transfermarkt et chercher
+les articles qui en parlent ; ou partir des articles et décider ensuite quelle
+piste ils concernent.
+
+**C'est la seconde.** Une rumeur est vivante : d'autres clubs se positionnent,
+un chiffre sort, un démenti tombe. Une piste peut naître dans la presse avant
+d'exister chez Transfermarkt. Partir de la rumeur imposerait de la relire à
+chaque passage pour savoir si elle a bougé ; partir de l'article donne un flux
+d'observations horodatées, dont chacune enrichit ou crée.
+
+```
+flux RSS ─┐
+          ├─ préfiltre titre + chapô ──→ hors L1 : jamais téléchargé
+     article téléchargé
+          ├─ préfiltre sur le corps ───→ hors L1 / vide : jamais soumis
+   phrases numérotées ──→ Ollama (schéma contraint) ──→ déclarations brutes
+          └────────────── garde-fou ────────────────────┘
+                             │
+              ┌──────────────┼──────────────┐
+           retenue         rejetée     hors périmètre
+                │
+        POST /api/claims ──→ press_articles + declarations
+```
+
+### 13.2 Périmètre : Ligue 1, entrant et sortant
+
+Une déclaration n'est retenue que si **au moins un des deux clubs** est en Ligue
+1. Ce n'est pas qu'un cadrage produit : c'est ce qui rend l'inférence sur CPU
+tenable. Mesuré sur un flux réel, 10 articles sur 25 passent la porte — le reste
+n'est jamais présenté au modèle et ne coûte rien.
+
+Le périmètre est tenu par `lib/referential.ts` : les 18 clubs, leurs alias de
+presse, et **les identifiants Transfermarkt comme clés**. C'est la pièce qui
+rend le rapprochement possible sans ressembler à de la magie — *le modèle lit
+des noms, le code résout des clés*. Les noms sont flous et c'est le travail d'un
+modèle ; les clés sont exactes et c'est le travail d'une table.
+
+### 13.3 Où tourne quoi, et pourquoi
+
+| | Où | Pourquoi là |
+|---|---|---|
+| Scraping + Ollama | **Mini PC** (i5, 16 Go) | Un modèle de 5 Go ne se charge pas dans une fonction serverless. |
+| Validation, résolution, écriture | **Vercel** (`/api/claims`) | Le worker ne détient aucune clé Supabase. Un jeton volé n'ouvre rien. |
+| Toute la logique | **Le dépôt**, sous `npm test` | n8n n'orchestre que l'appel. Le jour où il gêne, un `cron` le remplace sans rien réécrire. |
+
+Le worker envoie ses **observations** — le nom lu, la citation copiée, le
+montant converti par un parseur testé. Jamais ses conclusions : les clés de
+clubs sont recalculées côté serveur, à partir des libellés bruts. Une correction
+du référentiel s'applique alors au prochain envoi, sans toucher au mini PC.
+
+### 13.4 Le garde-fou — ce qui rend un 7B local acceptable
+
+**Le modèle ne produit jamais un fait directement affichable.** Il rend
+l'*indice* d'une phrase ; le code en tire la citation. Elle est donc exacte par
+construction — aucune vérification de sous-chaîne ne peut échouer sur une
+apostrophe — et ça coûte deux tokens au lieu de quarante, sur un CPU à
+3 tokens/s.
+
+Quatre contrôles, et un seul est verrouillé au niveau de la phrase :
+
+- **Le montant est cherché dans l'article, et comparé en valeur** — pas en
+  caractères, et pas à l'endroit que le modèle désigne. C'est le contrôle qui
+  attrape l'hallucination coûteuse : un chiffre plausible, bien formé, et absent
+  de l'article. Les deux versions plus strictes qui l'ont précédé n'ont rejeté
+  que des extractions justes (§13.5).
+- **Le nom du joueur est vérifié sur l'article entier.** L'exiger dans la
+  citation rejetait des extractions justes — la presse alterne nom et périphrase
+  (« pour *l'international français* »). Sa présence dans la citation devient un
+  `player_in_quote` de confiance, pas une condition.
+- **Le périmètre est vérifié deux fois**, côté worker et côté serveur. Le
+  serveur ne peut pas présumer de qui lui écrit.
+- **Tout ce que le modèle affirme doit se retrouver dans le texte.** La règle
+  s'est étendue champ par champ, chaque fois sur un cas réel : le club de L1
+  attribué doit être cité, la nature de l'opération (`libre`, `pret`, `clause`)
+  doit être dite. Un champ non attesté est déclassé plutôt que rejeté quand le
+  reste de la déclaration tient — corriger le champ vaut mieux que perdre le
+  fait.
+- **Cité ne veut pas dire partie au transfert, et surtout pas dans ce sens-là.**
+  Les contrôles ci-dessus vérifiaient la *présence* d'un club, jamais son
+  *rôle* — un club peut être cité comme concurrent, comme ancien club ou comme
+  courtisan. Un neuvième passage l'a payé : deux prétendants au même joueur
+  rendus en « origine → destination » (§13.5). Le texte doit donc pouvoir
+  **contredire** le rôle attribué.
+
+  Ce dernier contrôle est **volontairement étroit**, et c'est tout son dessin :
+  il ne demande pas au texte de *confirmer* le rôle. **Le silence passe.** Exiger
+  une confirmation rejetterait toutes les brèves qui nomment le club par une
+  périphrase — « le club artésien », « la Vieille Dame » —, et l'histoire de ce
+  garde-fou est faite de sur-rejets (§13.5, passages 1 à 4). Il ne lit qu'entre
+  la mention du club et celle du joueur : c'est ce qui distingue « l'AS Monaco
+  pense à **recruter** Sarr » d'un « **départ** de Lamine Camara » situé dans la
+  même phrase, mais accolé à un autre nom. Les deux sens dans le même intervalle
+  ne tranchent rien, et passent.
+
+Un rejet n'est pas un incident : c'est **la mesure**. Le taux de rejet se lit
+sans étiqueter quoi que ce soit et sert de cadran de précision — il monte le
+jour même où un changement de modèle ou de consigne fait dériver l'extraction.
+
+Il ne dit rien du **rappel**, et c'est sa limite : il ne voit que ce que le
+modèle a produit, jamais ce qu'il a laissé passer. Un passage réel a manqué une
+signature libre sans qu'aucun chiffre ne bouge. D'où le second cadran, la part
+d'articles dont le modèle ne tire *ni déclaration ni rejet* : un article de L1
+peut légitimement ne parler d'aucun mouvement, mais une part qui monte est un
+oubli qui s'installe.
+
+Le silence ne couvre pourtant qu'une moitié du rappel — celle des articles
+muets. Le premier envoi réel a montré l'autre : **une déclaration juste mais
+amputée de son montant**, sur une brève qui chiffrait pourtant le transfert. Le
+taux de rejet ne bougeait pas, le silence non plus, et `enriched` restait à
+zéro sans dire pourquoi. D'où le quatrième cadran, et il est **gratuit** : le
+préfiltre sait déjà lire les montants de l'article, il suffit de comparer ce
+qu'il trouve à ce que le modèle rapporte. Aucun étiquetage manuel.
+
+**Ce cadran pointe, il ne juge pas**, et c'est délibéré : tout chiffre d'un
+article n'est pas une indemnité de transfert. Mesuré sur le passage qui l'a
+motivé, il signale quatre montants — un oubli véritable (les 20 M€ en
+négociation sur Timber) et trois omissions *correctes* : le prix du transfert
+précédent d'un joueur (« recruté pour 24 M€ l'été dernier ») et, deux fois, une
+clause de rachat sur un départ libre. En faire un compteur de fautes afficherait
+« 3 fautes » là où le modèle a bien travaillé — soit exactement le travers des
+trois cadrans précédents, à l'envers.
+
+### 13.5 Ce que neuf passages réels ont corrigé
+
+Aucun de ces défauts n'était visible sur le papier.
+
+| Passage | Symptôme | Cause, et correctif |
+|---|---|---|
+| 1 | **100 % de rejet** | On demandait un montant *en euros* — donc une multiplication par un million, ce qu'un 7B rate volontiers, alors qu'un parseur testé attendait à côté. Et le schéma n'offrait aucune façon légale de dire « aucun montant » : un décodeur contraint en fabrique alors un. Le modèle recopie désormais, `null` est un type valide, et la consigne dit que l'absence de montant est le cas normal. |
+| 2 | **Aucun club, posture aléatoire** | `fromClub`, `toClub` et `stance` figuraient au schéma mais nulle part dans la consigne. Un décodeur contraint omet ce qu'on ne lui demande pas et tire au hasard dans une énumération qu'on ne lui explique pas. |
+| 3 | **Une extraction juste rejetée** | « Les représentants disposent d'un accord avec l'AS Roma » et « l'OL réclame 40 M€ » sont deux phrases ; le schéma n'autorisait qu'un seul indice. `feeSentence` laisse le montant citer sa propre phrase. |
+| 4 | **Les deux seules extractions chiffrées rejetées**, et un oubli invisible | Le modèle normalise la notation vers celle du titre : « 40 millions d'euros » pour « 40 M€ », « 9,3 M€ » pour « 9,3 millions d'euros ». L'indice de phrase était juste dans les deux cas — c'est la comparaison littérale qui rejetait. On compare désormais des **valeurs**, et on cherche le montant dans tout l'article. Le même passage a laissé filer une signature libre sans qu'aucun chiffre ne s'en aperçoive : d'où le cadran des silences, et une consigne qui dit qu'un transfert sans montant compte autant qu'un autre. |
+
+| 5 | **Zéro rejet, et deux déclarations sur six attendues** | Précision parfaite, rappel médiocre — la panne inverse des précédentes. Sur « PSG : Liverpool avance pour Barcola », `fromClub` à null alors que le PSG est dans le titre : la déclaration sort du périmètre sans un mot. Le préfiltre connaissait déjà le club et ne s'en servait pas. La consigne annonce désormais les clubs de L1 cités, et un garde-fou symétrique refuse un club attribué que l'article ne cite pas. |
+
+| 6 | **Le rappel remonte, `fromClub` résiste** | Sur les mêmes cinq brèves : trois déclarations au lieu de deux, plus aucun silence. Mais `fromClub` reste à null dans les trois cas où le club d'origine est étranger. « Le club qu'il quitte » demande de trancher un sens ; la consigne demande désormais « le club où il joue aujourd'hui ». Le champ `qualifier`, lui, sortait toujours à `exact` — la nuance (« environ », « au moins ») se lit maintenant dans le texte juste avant le chiffre, ce que le code fait mieux et gratuitement. |
+| 7 | **Le 3B mesuré : plus rapide, et inutilisable ici** | 31 s contre 42 s par article, mais aucun des deux montants que le 7B trouvait, cinq entrées pour un seul transfert, et quatre sorties hors schéma sur un même article. Le montant est le produit. Le passage a surtout révélé deux défauts du tableau de bord : les doublons comptaient comme des déclarations (repliés avant comptage désormais, en gardant la chiffrée), et un rejet de schéma ne nommait pas le champ fautif. |
+| 8 | **Le premier passage propre**, et un mot de trop | Cinq brèves, cinq déclarations, aucun rejet, aucun silence, aucun doublon. `fromClub` se remplit sur les départs vers l'étranger, les nuances apparaissent. Reste `feeKind: libre` sur un joueur sous contrat, dans un texte qui n'emploie jamais le mot : cette nature allume une pastille « Libre » sur la carte, donc elle doit être attestée par le texte, sinon elle est déclassée en « inconnu ». |
+| 9 | **Le tableau de bord flatte encore, pour une raison neuve** | Cinq brèves, cinq déclarations, « 0 rejeté, taux de rejet 0 % » — et une carte fausse dans le lot. Sur une brève où l'AS Monaco et la Juventus sont deux **prétendants** au même joueur, le modèle a rendu « Sarr · Monaco → Juventus » : un joueur qui quitte un club où il n'a jamais joué. Chaque contrôle passait — les deux clubs cités, le joueur cité, « prêt avec option d'achat » littéralement dans le texte. **Le garde-fou vérifiait la présence d'un club, jamais son rôle.** Le passage a aussi montré un trou dans les cues de `libre` : « libéré de son contrat » — la formulation la plus courante après « libre » — ne matchait pas le texte désaccentué, et deux départs libres réels sont sortis en « inconnu ». |
+| 10 | **Le premier envoi réel, et le quatrième angle mort** | Quatre déclarations retenues, une rejetée (Sarr, par le contrôle de rôle), quatre pistes créées en base — toutes justes. Mais sur « OM : Timber veut signer à Crystal Palace », la déclaration est juste et **amputée** : l'article dit « un tarif d'environ 20 millions d'euros », le modèle rend `—`. Le préfiltre, lui, lit ce montant sans peine. Aucun cadran ne bronchait : le taux de rejet est muet, le compteur de silence aussi (l'article a produit quelque chose), et `enriched` restait à zéro sans dire pourquoi. **Sur un produit dont le montant EST le produit, une déclaration amputée passait pour un succès.** |
+
+**Ce que la série enseigne** : les trois premiers défauts venaient du schéma,
+les deux suivants de ce que la consigne *ne dit pas*. Un décodeur contraint ne
+se tient pas mal — il fait exactement ce qu'on lui a demandé, y compris quand on
+ne lui a rien demandé. Et chaque tour de vis sur le rappel appelle son garde-fou
+sur la précision : pousser le modèle à remplir les clubs sans vérifier qu'ils
+sont dans le texte échangerait un oubli contre une erreur d'attribution, ce qui
+serait un mauvais échange.
+
+### 13.7 Le rapprochement — de la déclaration à la carte
+
+C'est la pièce qui relie le pipeline au produit. Sans elle l'extraction peut
+être parfaite : `transfer_id` reste nul, et rien n'atteint le feed.
+
+Elle répond à une seule question, article par article : **parle-t-on d'une
+piste déjà connue, ou d'une nouvelle ?**
+
+```
+déclaration en attente
+   │
+   ├─ même joueur, même destination ────────→ c'est la même piste
+   ├─ même joueur, même origine, et une
+   │  destination inconnue d'un côté ───────→ la même piste, qui se précise
+   └─ sinon ─────────────────────────────────→ une autre piste
+                                                 │
+                          destination nommée ? ──┴── non → reste en file
+                                     │
+                                    oui → ingest() ouvre la piste
+```
+
+**Les deux erreurs ne se valent pas**, et tout le module penche d'un côté. Un
+doublon dans le feed se voit et se corrige ; un montant posé sur la mauvaise
+piste se lit comme un fait. Les clubs étrangers n'ayant pas de référentiel, ils
+se comparent par libellé normalisé — « Man City » et « Manchester City » ne se
+rejoindront pas, et c'est un doublon assumé plutôt qu'une fusion hasardeuse.
+
+| Décision | Pourquoi |
+|---|---|
+| **Le montant n'est posé que si la piste n'en a pas** | Une rumeur Transfermarkt arrive sans montant : c'est exactement le trou que la presse comble. Un transfert conclu, lui, porte le chiffre officiel, qu'une estimation de presse n'a pas à écraser. La condition vit dans la requête (`is('fee_value_eur', null)`), pas seulement dans la lecture : entre les deux, l'ingestion a pu passer. |
+| **Le lien est posé même quand rien ne change** | L'observation vaut d'être conservée : c'est elle qui permettra d'afficher « trois sources concordent ». |
+| **Créer passe par `ingest()`** | `lib/ingest.ts` reste le point d'entrée UNIQUE de `transfers`. La piste née de la presse subit donc la même validation, le même dédoublonnage, et entre dans la file des visuels comme les autres. |
+| **Pas de piste sans destination** | Une carte « Fofana → ? » n'apprend rien. La déclaration attend la rumeur Transfermarkt plutôt que d'ouvrir une piste borgne. |
+| **Pas de piste depuis un démenti** | Ce serait faire naître une rumeur d'un article qui affirme qu'elle est fausse. Un démenti enrichit une piste ; il n'en ouvre pas. |
+| **Clé naturelle sans la source** | `press:{joueur}:{destination}` — deux journaux qui rapportent le même mouvement produisent une piste, pas deux cartes. |
+
+Le score d'une piste née de la presse **encode la posture déclarée**, il ne la
+calcule pas : rumeur 40, discussions 55, accord 75, officiel 100. Ce n'est pas
+une probabilité, et le Rumourometer de Transfermarkt n'est jamais écrasé par
+cet encodage sur les pistes qui en ont un.
+
+**Deux points d'appel, pour deux latences.** Le rapprochement suit l'écriture
+dans `/api/claims` — une déclaration dont la piste existe déjà atteint la carte
+tout de suite — et il suit la moisson dans le cron : les rumeurs qui viennent
+d'entrer sont précisément celles que des déclarations attendaient. Une brève de
+presse paraît souvent avant que Transfermarkt ne publie la rumeur.
+
+La jointure s'appuie sur `transfers.player_normalized`, colonne **générée**
+depuis `player_name`. Un `ilike` sur le nom brut ignore la casse mais pas les
+accents, et raterait « Paixão » contre « Paixao » — exactement les noms que ce
+produit manipule. L'accord entre `public.normalize_name` (SQL) et
+`normalizeName` (TypeScript) a été vérifié sur les accents, apostrophes,
+traits d'union et espaces doublés avant d'y adosser la jointure.
+
+### 13.6 État
+
+Livré et testé : le contrat de source (`lib/articles.ts`), la source Maxifoot,
+le référentiel, le préfiltre, le garde-fou, le worker Ollama, les deux tables et
+l'endpoint `/api/claims`. Le mode d'emploi du mini PC est dans
+`docs/EXTRACTION.md`.
+
+**L'envoi est opt-in.** Sans `--send`, le worker n'écrit rien vers la base —
+c'est volontaire : rien n'atterrit en base avant qu'on ait un taux de rejet
+regardable, mesuré sur de vrais articles.
+
+Le **rapprochement** (§13.7) est branché : les déclarations trouvent leur
+piste, ou en ouvrent une, et le montant de presse atteint la carte.
+
+Reste à faire : le banc d'essai sur articles étiquetés, puis les sources
+suivantes — chacune n'apportant qu'un parseur, le contrat étant déjà là. Et
+deux affinages que la première mesure en conditions réelles tranchera : les
+libellés de clubs étrangers, qui produisent aujourd'hui des doublons assumés,
+et la place de la posture déclarée dans le score affiché.

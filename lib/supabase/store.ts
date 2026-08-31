@@ -8,8 +8,10 @@ import {
   type MediaStore,
   type TransferStore,
 } from "@/lib/ingest";
+import type { DeclarationStore } from "@/lib/declarations";
 import { normalizeName } from "@/lib/format";
 import type { MarketValueQueue, PendingValue } from "@/lib/market-value";
+import type { CandidateTransfer, ReconcileStore } from "@/lib/reconcile";
 import type { DailyBudget, MediaQueue, PendingMedia } from "@/lib/resolve-media";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -246,6 +248,154 @@ export function createMarketValueStore(): MarketValueQueue {
         .eq("tm_player_id", tmPlayerId);
 
       if (error) throw new Error(`horodatage de la tentative : ${error.message}`);
+    },
+  };
+}
+
+/**
+ * Dépôt des déclarations de presse (§13 des specs — pipeline multi-sources).
+ *
+ * Séparé des précédents pour la même raison : `press_articles` et
+ * `declarations` ne partagent avec `transfers` ni cycle de vie ni fréquence
+ * d'écriture. Elles sont alimentées par un worker externe, pas par le cron.
+ */
+export function createDeclarationStore(): DeclarationStore {
+  const supabase = createAdminClient();
+
+  return {
+    async upsertArticles(rows) {
+      const found = new Map<string, string>();
+      if (rows.length === 0) return found;
+
+      // `select()` sur l'upsert : PostgREST rend les lignes écrites, donc leur
+      // identifiant. Sans ça il faudrait une seconde requête pour retrouver
+      // les articles qu'on vient d'insérer.
+      const { data, error } = await supabase
+        .from("press_articles")
+        .upsert([...rows], { onConflict: "guid", ignoreDuplicates: false })
+        .select("id, guid");
+
+      if (error) throw new Error(`upsert des articles : ${error.message}`);
+      for (const row of data ?? []) found.set(row.guid, row.id);
+      return found;
+    },
+
+    async upsertDeclarations(rows) {
+      if (rows.length === 0) return;
+
+      const { error } = await supabase
+        .from("declarations")
+        .upsert([...rows], { onConflict: "claim_key", ignoreDuplicates: false });
+
+      if (error) throw new Error(`upsert des déclarations : ${error.message}`);
+    },
+  };
+}
+
+/**
+ * Dépôt du rapprochement déclaration -> piste (§13.7).
+ *
+ * Il lit dans les deux tables et n'écrit que le lien et le montant : la
+ * création de pistes, elle, passe par `ingest()` — le point d'entrée unique de
+ * `transfers` — que la route injecte.
+ */
+export function createReconcileStore(): ReconcileStore {
+  const supabase = createAdminClient();
+
+  return {
+    async pending(limit) {
+      // La provenance est jointe depuis l'article : elle ne sert qu'ici, à
+      // créer une piste, et la dupliquer sur chaque déclaration serait la
+      // laisser diverger de sa source.
+      const { data, error } = await supabase
+        .from("declarations")
+        .select(
+          "id, player_name, player_normalized, from_club_name, to_club_name, fee_eur, fee_kind, qualifier, stance, published_at, press_articles(source, url)",
+        )
+        .is("transfer_id", null)
+        .order("published_at", { ascending: false })
+        .limit(limit);
+
+      if (error) throw new Error(`file de rapprochement : ${error.message}`);
+
+      return (data ?? []).map((row) => ({
+        id: row.id,
+        playerName: row.player_name,
+        playerNormalized: row.player_normalized,
+        fromClubName: row.from_club_name,
+        toClubName: row.to_club_name,
+        feeEur: row.fee_eur,
+        feeKind: row.fee_kind,
+        qualifier: row.qualifier,
+        stance: row.stance,
+        publishedAt: row.published_at,
+        source: row.press_articles?.source ?? "Presse",
+        url: row.press_articles?.url ?? "",
+      }));
+    },
+
+    async candidates(playersNormalized) {
+      const found = new Map<string, CandidateTransfer[]>();
+      if (playersNormalized.length === 0) return found;
+
+      // Égalité stricte sur la colonne générée, pas un `ilike` sur le nom
+      // brut : celui-ci ignore la casse mais PAS les accents, et raterait
+      // « Paixão » contre « Paixao » — exactement les noms qu'on manipule.
+      const { data, error } = await supabase
+        .from("transfers")
+        .select("id, external_id, player_normalized, from_club_name, to_club_name, fee_value_eur")
+        .in("player_normalized", [...playersNormalized]);
+
+      if (error) throw new Error(`candidats : ${error.message}`);
+
+      for (const row of data ?? []) {
+        if (!row.player_normalized) continue;
+        const list = found.get(row.player_normalized) ?? [];
+        list.push({
+          id: row.id,
+          externalId: row.external_id,
+          fromClubName: row.from_club_name,
+          toClubName: row.to_club_name,
+          feeValueEur: row.fee_value_eur,
+        });
+        found.set(row.player_normalized, list);
+      }
+      return found;
+    },
+
+    async link(declarationId, transferId) {
+      const { error } = await supabase
+        .from("declarations")
+        .update({ transfer_id: transferId })
+        .eq("id", declarationId);
+
+      if (error) throw new Error(`lien : ${error.message}`);
+    },
+
+    async applyFee(transferId, fee) {
+      // `is("fee_value_eur", null)` en condition d'écriture, et pas seulement
+      // en lecture : entre le moment où on a lu la piste et celui où on
+      // écrit, l'ingestion a pu y poser un montant officiel. Le garde-fou
+      // vit dans la requête, là où il ne peut pas être contourné.
+      const { error } = await supabase
+        .from("transfers")
+        .update({ fee_value_eur: fee.eur, transfer_fee: fee.label })
+        .eq("id", transferId)
+        .is("fee_value_eur", null);
+
+      if (error) throw new Error(`montant : ${error.message}`);
+    },
+
+    async idsByExternalId(externalIds) {
+      if (externalIds.length === 0) return new Map();
+
+      const { data, error } = await supabase
+        .from("transfers")
+        .select("id, external_id")
+        .in("external_id", [...externalIds]);
+
+      if (error) throw new Error(`relecture : ${error.message}`);
+      return new Map((data ?? []).map((row) => [row.external_id, row.id]));
     },
   };
 }
