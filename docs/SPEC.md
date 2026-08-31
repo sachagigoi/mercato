@@ -1058,6 +1058,45 @@ Sans cela, `/preview` reste le moyen de travailler le design, puisqu'il ne dépe
 Transfermarkt fournit portraits et écussons sans clé ni quota. La route dégrade
 proprement quand `API_FOOTBALL_KEY` est absente — ne pas la remettre.
 
+### Le périmètre Ligue 1 vaut pour TOUTES les sources
+
+La porte L1 n'existait que du côté presse. L'ingestion Transfermarkt moissonne
+`statistik/aktuellegeruechte` — la page des rumeurs **mondiale** — et insérait
+tout. Mesuré sur la base réelle : **11 rumeurs sur 138 touchaient la Ligue 1**.
+
+Les 91 % restants ne coûtaient pas que de la place. Chaque ligne entre dans la
+file des valeurs de marché et dans celle du détourage, et **ces files sont le
+goulot visible du produit** : 58 fiches en attente à dix par passage, dont ~53
+pour des joueurs que le feed n'a pas vocation à montrer. Après filtrage, la
+file est tombée à 3.
+
+**Les deux sens comptent.** Filtrer sur la seule compétition de destination —
+le champ que le scraper remonte déjà — ne garderait que les ARRIVÉES. Un départ
+de L1 vers l'étranger est exactement ce qu'un feed mercato français doit
+montrer. La porte s'appuie donc sur le **même référentiel que la chaîne
+presse**, appliqué aux deux clubs : une seule définition du périmètre, sans
+quoi une correction d'alias s'appliquerait d'un côté et pas de l'autre.
+
+`outOfScope` est compté à part de `skipped` : le premier dit « lisible, mais
+hors sujet », le second « inutilisable ». Les confondre masquerait une source
+qui change de format derrière un chiffre qu'on s'attend à voir gros.
+
+**Le nettoyage de l'existant a failli mal tourner, deux fois.**
+
+D'abord parce que la liste des lignes à conserver avait été calculée sur un
+instantané, et que le cron a moissonné entre-temps : 85 rumeurs au moment du
+calcul, 116 au moment du `DELETE`. Un `delete ... where id not in (liste)`
+aurait supprimé des rumeurs L1 arrivées depuis, jamais examinées. **On énumère
+ce qu'on supprime, jamais « tout sauf ».**
+
+Ensuite parce que la règle réécrite en SQL ne disait pas la même chose que le
+code : une recherche par sous-chaîne là où `resolveLigue1Club` fait une
+correspondance **exacte** du libellé entier. Les deux règles ont été comparées
+ligne à ligne avant toute suppression, et divergeaient sur un cas — « Paris
+Saint-Germain Espoirs », qu'une sous-chaîne aurait gardé. Une équipe réserve
+n'a rien à faire dans un feed de première équipe : c'est la règle exacte qui
+fait foi.
+
 ### Le déploiement Vercel
 
 | | |

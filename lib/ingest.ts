@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { resolveCountry } from "./countries.ts";
 import { normalizeName, parseFee } from "./format.ts";
+import { resolveLigue1Club } from "./referential.ts";
 import type { TransferInsert, TransferType } from "./types.ts";
 
 /** Taille des lots d'upsert. Assez gros pour limiter les allers-retours, assez
@@ -81,6 +82,15 @@ export type IngestReport = {
   inserted: number;
   updated: number;
   skipped: number;
+  /**
+   * Rumeurs écartées parce qu'aucun club de Ligue 1 n'y est partie.
+   *
+   * Compté à part de `skipped`, qui dit « la ligne était inutilisable ».
+   * Celle-ci était parfaitement lisible — elle ne nous concerne pas. Les
+   * confondre masquerait une source qui change de format derrière un chiffre
+   * qu'on s'attend à voir gros.
+   */
+  outOfScope: number;
   apiCallsUsed: number;
   durationMs: number;
   errors: string[];
@@ -120,6 +130,27 @@ export function validate(raw: readonly unknown[]): {
  * conflit sur `external_id` dans un même INSERT, ce que Postgres refuse :
  * « ON CONFLICT DO UPDATE command cannot affect row a second time ».
  */
+/**
+ * La rumeur touche-t-elle la Ligue 1 ?
+ *
+ * Transfermarkt sert une page de rumeurs **mondiale** — mesuré sur un flux
+ * réel : 8 rumeurs sur 85 concernent la L1. Les 77 autres ne coûtaient pas que
+ * de la place : chaque ligne entre dans la file des valeurs de marché et dans
+ * celle du détourage, et ces files sont le goulot visible du produit.
+ *
+ * Les deux sens comptent. Filtrer sur la seule compétition de destination — le
+ * champ que le scraper remonte déjà — ne garderait que les ARRIVÉES, et un
+ * départ de L1 vers l'étranger est exactement ce qu'un feed mercato français
+ * doit montrer.
+ *
+ * C'est le MÊME référentiel que la chaîne presse. Une seule définition du
+ * périmètre, quelle que soit la source : sans quoi une correction d'alias
+ * s'appliquerait d'un côté et pas de l'autre.
+ */
+export function touchesLigue1(row: ValidRawTransfer): boolean {
+  return resolveLigue1Club(row.fromClub) !== null || resolveLigue1Club(row.toClub) !== null;
+}
+
 export function dedupe(rows: readonly ValidRawTransfer[]): ValidRawTransfer[] {
   const byExternalId = new Map<string, ValidRawTransfer>();
   for (const row of rows) byExternalId.set(row.externalId, row);
@@ -220,8 +251,13 @@ export async function ingest(
   const now = options.now?.() ?? new Date();
 
   const { valid, errors } = validate(raw);
-  const rows = dedupe(valid);
-  const skipped = raw.length - rows.length;
+  const deduped = dedupe(valid);
+
+  // La porte est posée APRÈS le dédoublonnage et AVANT tout le reste : rien
+  // d'écarté ne doit toucher le cache de visuels ni la file de détourage.
+  const rows = deduped.filter(touchesLigue1);
+  const outOfScope = deduped.length - rows.length;
+  const skipped = raw.length - deduped.length;
 
   if (rows.length === 0) {
     return {
@@ -229,6 +265,7 @@ export async function ingest(
       inserted: 0,
       updated: 0,
       skipped,
+      outOfScope,
       apiCallsUsed: 0,
       durationMs: Date.now() - started,
       errors,
@@ -271,6 +308,7 @@ export async function ingest(
     inserted: rows.filter((r) => !existingById.has(r.externalId)).length,
     updated: rows.filter((r) => existingById.has(r.externalId)).length,
     skipped,
+    outOfScope,
     apiCallsUsed: 0,
     durationMs: Date.now() - started,
     errors,
